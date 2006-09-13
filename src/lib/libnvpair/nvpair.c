@@ -2,9 +2,8 @@
  * CDDL HEADER START
  *
  * The contents of this file are subject to the terms of the
- * Common Development and Distribution License, Version 1.0 only
- * (the "License").  You may not use this file except in compliance
- * with the License.
+ * Common Development and Distribution License (the "License").
+ * You may not use this file except in compliance with the License.
  *
  * You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
  * or http://www.opensolaris.org/os/licensing.
@@ -21,7 +20,7 @@
  */
 
 /*
- * Copyright 2005 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -568,7 +567,7 @@ nvlist_free(nvlist_t *nvl)
 	if (!(priv->nvp_stat & NV_STAT_EMBEDDED))
 		nv_mem_free(priv, nvl, NV_ALIGN(sizeof (nvlist_t)));
 	else
-		nvl->nvl_priv = (uint64_t) (uintptr_t) NULL;
+		nvl->nvl_priv = NULL;
 
 	nv_mem_free(priv, priv, sizeof (nvpriv_t));
 }
@@ -608,15 +607,18 @@ int
 nvlist_xdup(nvlist_t *nvl, nvlist_t **nvlp, nv_alloc_t *nva)
 {
 	int err;
+	nvlist_t *ret;
 
 	if (nvl == NULL || nvlp == NULL)
 		return (EINVAL);
 
-	if ((err = nvlist_xalloc(nvlp, nvl->nvl_nvflag, nva)) != 0)
+	if ((err = nvlist_xalloc(&ret, nvl->nvl_nvflag, nva)) != 0)
 		return (err);
 
-	if ((err = nvlist_copy_pairs(nvl, *nvlp)) != 0)
-		nvlist_free(*nvlp);
+	if ((err = nvlist_copy_pairs(nvl, ret)) != 0)
+		nvlist_free(ret);
+	else
+		*nvlp = ret;
 
 	return (err);
 }
@@ -870,8 +872,6 @@ nvlist_add_common(nvlist_t *nvl, const char *name,
 		}
 		break;
 	}
-	default:
-		break;
 	}
 
 	/* calculate sizes of the nvpair elements and the nvpair itself */
@@ -1794,7 +1794,7 @@ nvs_operation(nvstream_t *nvs, nvlist_t *nvl, size_t *buflen)
 {
 	int err;
 
-	if (((void *) (uintptr_t) nvl->nvl_priv) == NULL)
+	if (nvl->nvl_priv == NULL)
 		return (EFAULT);
 
 	/*

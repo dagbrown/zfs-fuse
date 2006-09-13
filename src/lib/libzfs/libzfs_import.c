@@ -593,14 +593,14 @@ get_configs(libzfs_handle_t *hdl, pool_list_t *pl)
 
 		zc.zc_config_dst_size = 2 * len;
 		if ((zc.zc_config_dst = (uint64_t)(uintptr_t)
-		    zfs_alloc(hdl, zc.zc_config_dst_size)) == 0)
+		    zfs_alloc(hdl, zc.zc_config_dst_size)) == NULL)
 			goto nomem;
 
 		while ((err = ioctl(hdl->libzfs_fd, ZFS_IOC_POOL_TRYIMPORT,
 		    &zc)) != 0 && errno == ENOMEM) {
 			free((void *)(uintptr_t)zc.zc_config_dst);
 			if ((zc.zc_config_dst = (uint64_t)(uintptr_t)
-			    zfs_alloc(hdl, zc.zc_config_dst_size)) == 0)
+			    zfs_alloc(hdl, zc.zc_config_dst_size)) == NULL)
 				goto nomem;
 		}
 
@@ -786,6 +786,13 @@ zpool_find_import(libzfs_handle_t *hdl, int argc, char **argv)
 			 * Ignore directories (which includes "." and "..").
 			 */
 			if (S_ISDIR(statbuf.st_mode))
+				continue;
+
+			/*
+			 * Ignore special (non-character or non-block) files.
+			 */
+			if (!S_ISREG(statbuf.st_mode) &&
+			    !S_ISBLK(statbuf.st_mode))
 				continue;
 
 			if ((fd = open64(path, O_RDONLY)) < 0)

@@ -99,26 +99,6 @@ zpool_name_valid(libzfs_handle_t *hdl, boolean_t isopen, const char *pool)
 				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 				    "pool name is reserved"));
 				break;
-
-			case NAME_ERR_LEADING_SLASH:
-				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "leading slash in name"));
-				break;
-
-			case NAME_ERR_EMPTY_COMPONENT:
-				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "empty component in name"));
-				break;
-
-			case NAME_ERR_TRAILING_SLASH:
-				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "trailing slash in name"));
-				break;
-
-			case NAME_ERR_MULTIPLE_AT:
-				zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
-				    "multiple '@' delimiters in name"));
-				break;
 			}
 		}
 		return (B_FALSE);
@@ -502,7 +482,7 @@ zpool_destroy(zpool_handle_t *zhp)
 	    ZFS_TYPE_FILESYSTEM)) == NULL)
 		return (-1);
 
-	if (zpool_remove_zvol_links(zhp) != 0)
+	if (zpool_remove_zvol_links(zhp) != NULL)
 		return (-1);
 
 	(void) strlcpy(zc.zc_name, zhp->zpool_name, sizeof (zc.zc_name));
@@ -771,9 +751,13 @@ zpool_scrub(zpool_handle_t *zhp, pool_scrub_type_t type)
 		return (zpool_standard_error(hdl, errno, msg));
 }
 
+/*
+ * 'avail_spare' is set to TRUE if the provided guid refers to an AVAIL
+ * spare; but FALSE if its an INUSE spare.
+ */
 static nvlist_t *
 vdev_to_nvlist_iter(nvlist_t *nv, const char *search, uint64_t guid,
-    boolean_t *isspare)
+    boolean_t *avail_spare)
 {
 	uint_t c, children;
 	nvlist_t **child;
@@ -815,15 +799,15 @@ vdev_to_nvlist_iter(nvlist_t *nv, const char *search, uint64_t guid,
 
 	for (c = 0; c < children; c++)
 		if ((ret = vdev_to_nvlist_iter(child[c], search, guid,
-		    isspare)) != NULL)
+		    avail_spare)) != NULL)
 			return (ret);
 
 	if (nvlist_lookup_nvlist_array(nv, ZPOOL_CONFIG_SPARES,
 	    &child, &children) == 0) {
 		for (c = 0; c < children; c++) {
 			if ((ret = vdev_to_nvlist_iter(child[c], search, guid,
-			    isspare)) != NULL) {
-				*isspare = B_TRUE;
+			    avail_spare)) != NULL) {
+				*avail_spare = B_TRUE;
 				return (ret);
 			}
 		}
@@ -833,7 +817,7 @@ vdev_to_nvlist_iter(nvlist_t *nv, const char *search, uint64_t guid,
 }
 
 nvlist_t *
-zpool_find_vdev(zpool_handle_t *zhp, const char *path, boolean_t *isspare)
+zpool_find_vdev(zpool_handle_t *zhp, const char *path, boolean_t *avail_spare)
 {
 	char buf[MAXPATHLEN];
 	const char *search;
@@ -854,8 +838,35 @@ zpool_find_vdev(zpool_handle_t *zhp, const char *path, boolean_t *isspare)
 	verify(nvlist_lookup_nvlist(zhp->zpool_config, ZPOOL_CONFIG_VDEV_TREE,
 	    &nvroot) == 0);
 
-	*isspare = B_FALSE;
-	return (vdev_to_nvlist_iter(nvroot, search, guid, isspare));
+	*avail_spare = B_FALSE;
+	return (vdev_to_nvlist_iter(nvroot, search, guid, avail_spare));
+}
+
+/*
+ * Returns TRUE if the given guid corresponds to a spare (INUSE or not).
+ */
+static boolean_t
+is_spare(zpool_handle_t *zhp, uint64_t guid)
+{
+	uint64_t spare_guid;
+	nvlist_t *nvroot;
+	nvlist_t **spares;
+	uint_t nspares;
+	int i;
+
+	verify(nvlist_lookup_nvlist(zhp->zpool_config, ZPOOL_CONFIG_VDEV_TREE,
+	    &nvroot) == 0);
+	if (nvlist_lookup_nvlist_array(nvroot, ZPOOL_CONFIG_SPARES,
+	    &spares, &nspares) == 0) {
+		for (i = 0; i < nspares; i++) {
+			verify(nvlist_lookup_uint64(spares[i],
+			    ZPOOL_CONFIG_GUID, &spare_guid) == 0);
+			if (guid == spare_guid)
+				return (B_TRUE);
+		}
+	}
+
+	return (B_FALSE);
 }
 
 /*
@@ -867,20 +878,20 @@ zpool_vdev_online(zpool_handle_t *zhp, const char *path)
 	zfs_cmd_t zc = { 0 };
 	char msg[1024];
 	nvlist_t *tgt;
-	boolean_t isspare;
+	boolean_t avail_spare;
 	libzfs_handle_t *hdl = zhp->zpool_hdl;
 
 	(void) snprintf(msg, sizeof (msg),
 	    dgettext(TEXT_DOMAIN, "cannot online %s"), path);
 
 	(void) strlcpy(zc.zc_name, zhp->zpool_name, sizeof (zc.zc_name));
-	if ((tgt = zpool_find_vdev(zhp, path, &isspare)) == NULL)
+	if ((tgt = zpool_find_vdev(zhp, path, &avail_spare)) == NULL)
 		return (zfs_error(hdl, EZFS_NODEVICE, msg));
 
-	if (isspare)
-		return (zfs_error(hdl, EZFS_ISSPARE, msg));
-
 	verify(nvlist_lookup_uint64(tgt, ZPOOL_CONFIG_GUID, &zc.zc_guid) == 0);
+
+	if (avail_spare || is_spare(zhp, zc.zc_guid) == B_TRUE)
+		return (zfs_error(hdl, EZFS_ISSPARE, msg));
 
 	if (ioctl(zhp->zpool_hdl->libzfs_fd, ZFS_IOC_VDEV_ONLINE, &zc) == 0)
 		return (0);
@@ -897,20 +908,20 @@ zpool_vdev_offline(zpool_handle_t *zhp, const char *path, int istmp)
 	zfs_cmd_t zc = { 0 };
 	char msg[1024];
 	nvlist_t *tgt;
-	boolean_t isspare;
+	boolean_t avail_spare;
 	libzfs_handle_t *hdl = zhp->zpool_hdl;
 
 	(void) snprintf(msg, sizeof (msg),
 	    dgettext(TEXT_DOMAIN, "cannot offline %s"), path);
 
 	(void) strlcpy(zc.zc_name, zhp->zpool_name, sizeof (zc.zc_name));
-	if ((tgt = zpool_find_vdev(zhp, path, &isspare)) == NULL)
+	if ((tgt = zpool_find_vdev(zhp, path, &avail_spare)) == NULL)
 		return (zfs_error(hdl, EZFS_NODEVICE, msg));
 
-	if (isspare)
-		return (zfs_error(hdl, EZFS_ISSPARE, msg));
-
 	verify(nvlist_lookup_uint64(tgt, ZPOOL_CONFIG_GUID, &zc.zc_guid) == 0);
+
+	if (avail_spare || is_spare(zhp, zc.zc_guid) == B_TRUE)
+		return (zfs_error(hdl, EZFS_ISSPARE, msg));
 
 	zc.zc_cookie = istmp;
 
@@ -972,7 +983,7 @@ zpool_vdev_attach(zpool_handle_t *zhp,
 	int ret;
 	size_t len;
 	nvlist_t *tgt;
-	boolean_t isspare;
+	boolean_t avail_spare;
 	uint64_t val;
 	char *path;
 	nvlist_t **child;
@@ -988,10 +999,10 @@ zpool_vdev_attach(zpool_handle_t *zhp,
 		    "cannot attach %s to %s"), new_disk, old_disk);
 
 	(void) strlcpy(zc.zc_name, zhp->zpool_name, sizeof (zc.zc_name));
-	if ((tgt = zpool_find_vdev(zhp, old_disk, &isspare)) == 0)
+	if ((tgt = zpool_find_vdev(zhp, old_disk, &avail_spare)) == 0)
 		return (zfs_error(hdl, EZFS_NODEVICE, msg));
 
-	if (isspare)
+	if (avail_spare)
 		return (zfs_error(hdl, EZFS_ISSPARE, msg));
 
 	verify(nvlist_lookup_uint64(tgt, ZPOOL_CONFIG_GUID, &zc.zc_guid) == 0);
@@ -1014,8 +1025,8 @@ zpool_vdev_attach(zpool_handle_t *zhp,
 	if (replacing &&
 	    nvlist_lookup_uint64(tgt, ZPOOL_CONFIG_IS_SPARE, &val) == 0 &&
 	    nvlist_lookup_string(child[0], ZPOOL_CONFIG_PATH, &path) == 0 &&
-	    (zpool_find_vdev(zhp, path, &isspare) == NULL || !isspare) &&
-	    is_replacing_spare(config_root, tgt, 1)) {
+	    (zpool_find_vdev(zhp, path, &avail_spare) == NULL ||
+	    !avail_spare) && is_replacing_spare(config_root, tgt, 1)) {
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 		    "can only be replaced by another hot spare"));
 		return (zfs_error(hdl, EZFS_BADTARGET, msg));
@@ -1027,7 +1038,7 @@ zpool_vdev_attach(zpool_handle_t *zhp,
 	 */
 	if (replacing &&
 	    nvlist_lookup_string(child[0], ZPOOL_CONFIG_PATH, &path) == 0 &&
-	    zpool_find_vdev(zhp, path, &isspare) != NULL && isspare &&
+	    zpool_find_vdev(zhp, path, &avail_spare) != NULL && avail_spare &&
 	    is_replacing_spare(config_root, tgt, 0)) {
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 		    "device has already been replaced with a spare"));
@@ -1122,17 +1133,17 @@ zpool_vdev_detach(zpool_handle_t *zhp, const char *path)
 	zfs_cmd_t zc = { 0 };
 	char msg[1024];
 	nvlist_t *tgt;
-	boolean_t isspare;
+	boolean_t avail_spare;
 	libzfs_handle_t *hdl = zhp->zpool_hdl;
 
 	(void) snprintf(msg, sizeof (msg),
 	    dgettext(TEXT_DOMAIN, "cannot detach %s"), path);
 
 	(void) strlcpy(zc.zc_name, zhp->zpool_name, sizeof (zc.zc_name));
-	if ((tgt = zpool_find_vdev(zhp, path, &isspare)) == 0)
+	if ((tgt = zpool_find_vdev(zhp, path, &avail_spare)) == 0)
 		return (zfs_error(hdl, EZFS_NODEVICE, msg));
 
-	if (isspare)
+	if (avail_spare)
 		return (zfs_error(hdl, EZFS_ISSPARE, msg));
 
 	verify(nvlist_lookup_uint64(tgt, ZPOOL_CONFIG_GUID, &zc.zc_guid) == 0);
@@ -1174,17 +1185,17 @@ zpool_vdev_remove(zpool_handle_t *zhp, const char *path)
 	zfs_cmd_t zc = { 0 };
 	char msg[1024];
 	nvlist_t *tgt;
-	boolean_t isspare;
+	boolean_t avail_spare;
 	libzfs_handle_t *hdl = zhp->zpool_hdl;
 
 	(void) snprintf(msg, sizeof (msg),
 	    dgettext(TEXT_DOMAIN, "cannot remove %s"), path);
 
 	(void) strlcpy(zc.zc_name, zhp->zpool_name, sizeof (zc.zc_name));
-	if ((tgt = zpool_find_vdev(zhp, path, &isspare)) == 0)
+	if ((tgt = zpool_find_vdev(zhp, path, &avail_spare)) == 0)
 		return (zfs_error(hdl, EZFS_NODEVICE, msg));
 
-	if (!isspare) {
+	if (!avail_spare) {
 		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN,
 		    "only hot spares can be removed"));
 		return (zfs_error(hdl, EZFS_NODEVICE, msg));
@@ -1207,7 +1218,7 @@ zpool_clear(zpool_handle_t *zhp, const char *path)
 	zfs_cmd_t zc = { 0 };
 	char msg[1024];
 	nvlist_t *tgt;
-	boolean_t isspare;
+	boolean_t avail_spare;
 	libzfs_handle_t *hdl = zhp->zpool_hdl;
 
 	if (path)
@@ -1221,10 +1232,10 @@ zpool_clear(zpool_handle_t *zhp, const char *path)
 
 	(void) strlcpy(zc.zc_name, zhp->zpool_name, sizeof (zc.zc_name));
 	if (path) {
-		if ((tgt = zpool_find_vdev(zhp, path, &isspare)) == 0)
+		if ((tgt = zpool_find_vdev(zhp, path, &avail_spare)) == 0)
 			return (zfs_error(hdl, EZFS_NODEVICE, msg));
 
-		if (isspare)
+		if (avail_spare)
 			return (zfs_error(hdl, EZFS_ISSPARE, msg));
 
 		verify(nvlist_lookup_uint64(tgt, ZPOOL_CONFIG_GUID,
@@ -1395,9 +1406,6 @@ set_path(zpool_handle_t *zhp, nvlist_t *nv, const char *path)
  * If 'zhp' is NULL, then this is an exported pool, and we don't need to do any
  * of these checks.
  */
-/*
- * zfs-fuse FIXME: Handle this properly
- */
 char *
 zpool_vdev_name(libzfs_handle_t *hdl, zpool_handle_t *zhp, nvlist_t *nv)
 {
@@ -1409,7 +1417,7 @@ zpool_vdev_name(libzfs_handle_t *hdl, zpool_handle_t *zhp, nvlist_t *nv)
 	    &value) == 0) {
 		verify(nvlist_lookup_uint64(nv, ZPOOL_CONFIG_GUID,
 		    &value) == 0);
-		(void) snprintf(buf, sizeof (buf), "%llu", (u_longlong_t) value);
+		(void) snprintf(buf, sizeof (buf), "%llu", value);
 		path = buf;
 	} else if (nvlist_lookup_string(nv, ZPOOL_CONFIG_PATH, &path) == 0) {
 
@@ -1463,7 +1471,7 @@ zpool_vdev_name(libzfs_handle_t *hdl, zpool_handle_t *zhp, nvlist_t *nv)
 			verify(nvlist_lookup_uint64(nv, ZPOOL_CONFIG_NPARITY,
 			    &value) == 0);
 			(void) snprintf(buf, sizeof (buf), "%s%llu", path,
-			    (u_longlong_t) value);
+			    value);
 			path = buf;
 		}
 	}
@@ -1503,7 +1511,7 @@ zpool_get_errlog(zpool_handle_t *zhp, nvlist_t ***list, size_t *nelem)
 	verify(nvlist_lookup_uint64(zhp->zpool_config, ZPOOL_CONFIG_ERRCOUNT,
 	    &count) == 0);
 	if ((zc.zc_config_dst = (uintptr_t)zfs_alloc(zhp->zpool_hdl,
-	    count * sizeof (zbookmark_t))) == (uintptr_t) NULL)
+	    count * sizeof (zbookmark_t))) == NULL)
 		return (-1);
 	zc.zc_config_dst_size = count;
 	(void) strcpy(zc.zc_name, zhp->zpool_name);
@@ -1514,7 +1522,7 @@ zpool_get_errlog(zpool_handle_t *zhp, nvlist_t ***list, size_t *nelem)
 			if (errno == ENOMEM) {
 				if ((zc.zc_config_dst = (uintptr_t)
 				    zfs_alloc(zhp->zpool_hdl,
-				    zc.zc_config_dst_size)) == (uintptr_t) NULL)
+				    zc.zc_config_dst_size)) == NULL)
 					return (-1);
 			} else {
 				return (-1);
@@ -1598,12 +1606,12 @@ zpool_get_errlog(zpool_handle_t *zhp, nvlist_t ***list, size_t *nelem)
 				goto nomem;
 		} else {
 			(void) snprintf(buf, sizeof (buf), "%llx",
-			    (longlong_t) zb[i].zb_objset);
+			    zb[i].zb_objset);
 			if (nvlist_add_string(nv,
 			    ZPOOL_ERR_DATASET, buf) != 0)
 				goto nomem;
 			(void) snprintf(buf, sizeof (buf), "%llx",
-			    (longlong_t) zb[i].zb_object);
+			    zb[i].zb_object);
 			if (nvlist_add_string(nv, ZPOOL_ERR_OBJECT,
 			    buf) != 0)
 				goto nomem;

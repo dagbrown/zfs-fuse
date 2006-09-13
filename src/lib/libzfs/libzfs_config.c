@@ -140,7 +140,7 @@ namespace_reload(libzfs_handle_t *hdl)
 	 */
 	zc.zc_config_dst_size = 1024;
 	if ((zc.zc_config_dst = (uint64_t)(uintptr_t)
-	    zfs_alloc(hdl, zc.zc_config_dst_size)) == 0)
+	    zfs_alloc(hdl, zc.zc_config_dst_size)) == NULL)
 		return (-1);
 	for (;;) {
 		zc.zc_cookie = hdl->libzfs_ns_gen;
@@ -157,7 +157,7 @@ namespace_reload(libzfs_handle_t *hdl)
 				free((void *)(uintptr_t)zc.zc_config_dst);
 				if ((zc.zc_config_dst = (uint64_t)(uintptr_t)
 				    zfs_alloc(hdl, zc.zc_config_dst_size))
-				    == 0)
+				    == NULL)
 					return (-1);
 				break;
 
@@ -211,11 +211,14 @@ namespace_reload(libzfs_handle_t *hdl)
 		if ((cn->cn_name = zfs_strdup(hdl,
 		    nvpair_name(elem))) == NULL) {
 			free(cn);
+			nvlist_free(config);
 			return (-1);
 		}
 
 		verify(nvpair_value_nvlist(elem, &child) == 0);
 		if (nvlist_dup(child, &cn->cn_config, 0) != 0) {
+			free(cn->cn_name);
+			free(cn);
 			nvlist_free(config);
 			return (no_memory(hdl));
 		}
@@ -262,7 +265,7 @@ zpool_refresh_stats(zpool_handle_t *zhp, boolean_t *missing)
 
 	zc.zc_config_dst_size = zhp->zpool_config_size;
 	if ((zc.zc_config_dst = (uint64_t)(uintptr_t)
-	    zfs_alloc(zhp->zpool_hdl, zc.zc_config_dst_size)) == 0)
+	    zfs_alloc(zhp->zpool_hdl, zc.zc_config_dst_size)) == NULL)
 		return (-1);
 
 	for (;;) {
@@ -279,7 +282,7 @@ zpool_refresh_stats(zpool_handle_t *zhp, boolean_t *missing)
 			free((void *)(uintptr_t)zc.zc_config_dst);
 			if ((zc.zc_config_dst = (uint64_t)(uintptr_t)
 			    zfs_alloc(zhp->zpool_hdl,
-			    zc.zc_config_dst_size)) == 0)
+			    zc.zc_config_dst_size)) == NULL)
 				return (-1);
 		} else {
 			free((void *)(uintptr_t)zc.zc_config_dst);

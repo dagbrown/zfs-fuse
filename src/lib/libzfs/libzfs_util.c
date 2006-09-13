@@ -40,7 +40,6 @@
 #include <sys/mnttab.h>
 
 #include <libzfs.h>
-#include <zfsfuse.h>
 
 #include "libzfs_impl.h"
 
@@ -147,13 +146,14 @@ libzfs_error_description(libzfs_handle_t *hdl)
 		    "spare"));
 	case EZFS_INVALCONFIG:
 		return (dgettext(TEXT_DOMAIN, "invalid vdev configuration"));
+	case EZFS_RECURSIVE:
+		return (dgettext(TEXT_DOMAIN, "recursive dataset dependency"));
 	case EZFS_UNKNOWN:
 		return (dgettext(TEXT_DOMAIN, "unknown error"));
 	default:
-		abort();
+		assert(hdl->libzfs_error == 0);
+		return (dgettext(TEXT_DOMAIN, "no error"));
 	}
-
-	/* NOTREACHED */
 }
 
 /*PRINTFLIKE2*/
@@ -394,13 +394,13 @@ zfs_nicenum(uint64_t num, char *buf, size_t buflen)
 	u = " KMGTPE"[index];
 
 	if (index == 0) {
-		(void) snprintf(buf, buflen, "%llu", (unsigned long long) n);
+		(void) snprintf(buf, buflen, "%llu", n);
 	} else if ((num & ((1ULL << 10 * index) - 1)) == 0) {
 		/*
 		 * If this is an even multiple of the base, always display
 		 * without any decimal precision.
 		 */
-		(void) snprintf(buf, buflen, "%llu%c", (unsigned long long) n, u);
+		(void) snprintf(buf, buflen, "%llu%c", n, u);
 	} else {
 		/*
 		 * We want to choose a precision that reflects the best choice
@@ -436,7 +436,7 @@ libzfs_init(void)
 		return (NULL);
 	}
 
-	if ((hdl->libzfs_fd = zfsfuse_open(ZFS_DEV_NAME, O_RDWR)) == -1) {
+	if ((hdl->libzfs_fd = open(ZFS_DEV, O_RDWR)) < 0) {
 		free(hdl);
 		return (NULL);
 	}
