@@ -41,7 +41,6 @@
 #include <strings.h>
 #include <unistd.h>
 #include <priv.h>
-#include <zfsfuse.h>
 
 #include <sys/stat.h>
 
@@ -290,6 +289,14 @@ usage(boolean_t requested)
 			for (i = 0; column_subopts[i] != NULL; i++)
 				(void) fprintf(fp, "\t%s\n", column_subopts[i]);
 		}
+	}
+
+	/*
+	 * See comments at end of main().
+	 */
+	if (getenv("ZFS_ABORT") != NULL) {
+		(void) printf("dumping core by request\n");
+		abort();
 	}
 
 	exit(requested ? 0 : 2);
@@ -652,7 +659,8 @@ zpool_do_create(int argc, char **argv)
 			if (pool != NULL) {
 				if (mountpoint != NULL)
 					verify(zfs_prop_set(pool,
-					    ZFS_PROP_MOUNTPOINT,
+					    zfs_prop_to_name(
+					    ZFS_PROP_MOUNTPOINT),
 					    mountpoint) == 0);
 				if (zfs_mount(pool, NULL, 0) == 0)
 					ret = zfs_share(pool);
@@ -944,7 +952,7 @@ show_import(nvlist_t *config)
 	reason = zpool_import_status(config, &msgid);
 
 	(void) printf("  pool: %s\n", name);
-	(void) printf("    id: %llu\n", (u_longlong_t) guid);
+	(void) printf("    id: %llu\n", guid);
 	(void) printf(" state: %s", health);
 	if (pool_state == POOL_STATE_DESTROYED)
 	    (void) printf(" (DESTROYED)");
@@ -1824,7 +1832,7 @@ list_callback(zpool_handle_t *zhp, void *data)
 				uint64_t capacity = (total == 0 ? 0 :
 				    (used * 100 / total));
 				(void) snprintf(buf, sizeof (buf), "%llu%%",
-				    (u_longlong_t) capacity);
+				    capacity);
 			}
 			break;
 
@@ -2363,6 +2371,7 @@ zpool_do_scrub(int argc, char **argv)
 
 typedef struct status_cbdata {
 	int		cb_count;
+	boolean_t	cb_allpools;
 	boolean_t	cb_verbose;
 	boolean_t	cb_explain;
 	boolean_t	cb_first;
@@ -2615,8 +2624,8 @@ print_error_log(zpool_handle_t *zhp)
 
 	(void) printf("errors: The following persistent errors have been "
 	    "detected:\n\n");
-	(void) printf("%8s  %-*s  %-*s  %s\n", "", (int) maxdsname, "DATASET",
-	    (int) maxobjname, "OBJECT", "RANGE");
+	(void) printf("%8s  %-*s  %-*s  %s\n", "", maxdsname, "DATASET",
+	    maxobjname, "OBJECT", "RANGE");
 
 	for (i = 0; i < nelem; i++) {
 		nv = log[i];
@@ -2628,8 +2637,8 @@ print_error_log(zpool_handle_t *zhp)
 		verify(nvlist_lookup_string(nv, ZPOOL_ERR_RANGE,
 		    &range) == 0);
 
-		(void) printf("%8s  %-*s  %-*s  %s\n", "", (int) maxdsname,
-		    dsname, (int) maxobjname, objname, range);
+		(void) printf("%8s  %-*s  %-*s  %s\n", "", maxdsname,
+		    dsname, maxobjname, objname, range);
 	}
 }
 
@@ -2686,8 +2695,15 @@ status_callback(zpool_handle_t *zhp, void *data)
 	 * If we were given 'zpool status -x', only report those pools with
 	 * problems.
 	 */
-	if (reason == ZPOOL_STATUS_OK && cbp->cb_explain)
+	if (reason == ZPOOL_STATUS_OK && cbp->cb_explain) {
+		if (!cbp->cb_allpools) {
+			(void) printf(gettext("pool '%s' is healthy\n"),
+			    zpool_get_name(zhp));
+			if (cbp->cb_first)
+				cbp->cb_first = B_FALSE;
+		}
 		return (0);
+	}
 
 	if (cbp->cb_first)
 		cbp->cb_first = B_FALSE;
@@ -2853,8 +2869,8 @@ status_callback(zpool_handle_t *zhp, void *data)
 				(void) printf(gettext("errors: No known data "
 				    "errors\n"));
 			else if (!cbp->cb_verbose)
-				(void) printf(gettext("errors: %llu data errors, "
-				    "use '-v' for a list\n"), (u_longlong_t) nerr);
+				(void) printf(gettext("errors: %llu data "
+				    "errors, use '-v' for a list\n"), nerr);
 			else
 				print_error_log(zhp);
 		}
@@ -2902,20 +2918,15 @@ zpool_do_status(int argc, char **argv)
 
 	cb.cb_first = B_TRUE;
 
+	if (argc == 0)
+		cb.cb_allpools = B_TRUE;
+
 	ret = for_each_pool(argc, argv, B_TRUE, status_callback, &cb);
 
 	if (argc == 0 && cb.cb_count == 0)
 		(void) printf(gettext("no pools available\n"));
-	else if (cb.cb_explain && cb.cb_first) {
-		if (argc == 0) {
-			(void) printf(gettext("all pools are healthy\n"));
-		} else {
-			int i;
-			for (i = 0; i < argc; i++)
-				(void) printf(gettext("pool '%s' is healthy\n"),
-				    argv[i]);
-		}
-	}
+	else if (cb.cb_explain && cb.cb_first && cb.cb_allpools)
+		(void) printf(gettext("all pools are healthy\n"));
 
 	return (ret);
 }
@@ -2951,7 +2962,7 @@ upgrade_cb(zpool_handle_t *zhp, void *arg)
 				cbp->cb_first = B_FALSE;
 			}
 
-			(void) printf("%2llu   %s\n", (u_longlong_t) version,
+			(void) printf("%2llu   %s\n", version,
 			    zpool_get_name(zhp));
 		} else {
 			cbp->cb_first = B_FALSE;
@@ -2972,7 +2983,7 @@ upgrade_cb(zpool_handle_t *zhp, void *arg)
 			cbp->cb_first = B_FALSE;
 		}
 
-		(void) printf("%2llu   %s\n", (u_longlong_t) version,
+		(void) printf("%2llu   %s\n", version,
 		    zpool_get_name(zhp));
 	}
 
@@ -3165,8 +3176,7 @@ main(int argc, char **argv)
 	 */
 	if (strcmp(cmdname, "freeze") == 0 && argc == 3) {
 		char buf[16384];
-		/* zfs-fuse: zfsfuse_open() connects to the UNIX domain socket */
-		int fd = zfsfuse_open(ZFS_DEV_NAME, O_RDWR);
+		int fd = open(ZFS_DEV, O_RDWR);
 		(void) strcpy((void *)buf, argv[2]);
 		return (!!ioctl(fd, ZFS_IOC_POOL_FREEZE, buf));
 	}

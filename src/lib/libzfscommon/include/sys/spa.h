@@ -61,9 +61,9 @@ struct dsl_pool;
 #define	BF64_GET(x, low, len)		BF64_DECODE(x, low, len)
 
 #define	BF32_SET(x, low, len, val)	\
-	((x) ^= BF32_ENCODE((x >> low) ^ (val), low, len))
+	((x) ^= BF32_ENCODE((x >> low) ^ val, low, len))
 #define	BF64_SET(x, low, len, val)	\
-	((x) ^= BF64_ENCODE((x >> low) ^ (val), low, len))
+	((x) ^= BF64_ENCODE((x >> low) ^ val, low, len))
 
 #define	BF32_GET_SB(x, low, len, shift, bias)	\
 	((BF32_GET(x, low, len) + (bias)) << (shift))
@@ -439,8 +439,8 @@ extern int spa_get_errlog(spa_t *spa, void *uaddr, size_t *count);
 extern void spa_errlog_rotate(spa_t *spa);
 extern void spa_errlog_drain(spa_t *spa);
 extern void spa_errlog_sync(spa_t *spa, uint64_t txg);
-extern int spa_bookmark_name(spa_t *spa, struct zbookmark *zb, char *ds,
-    size_t dsname, char *obj, size_t objname, char *range, size_t rangelen);
+extern int spa_bookmark_name(spa_t *spa, struct zbookmark *zb,
+    nvlist_t *nvl);
 extern void spa_get_errlists(spa_t *spa, avl_tree_t *last, avl_tree_t *scrub);
 
 /* Initialization and termination */

@@ -1133,6 +1133,28 @@ ztest_log_create(zilog_t *zilog, dmu_tx_t *tx, uint64_t object, int mode)
 	return (zil_itx_assign(zilog, itx, tx));
 }
 
+#ifndef lint
+static uint64_t
+ztest_log_remove(zilog_t *zilog, dmu_tx_t *tx, uint64_t object)
+{
+	itx_t *itx;
+	lr_remove_t *lr;
+	size_t namesize;
+	char name[24];
+
+	(void) sprintf(name, "ZOBJ_%llu", (u_longlong_t)object);
+	namesize = strlen(name) + 1;
+
+	itx = zil_itx_create(TX_REMOVE, sizeof (*lr) + namesize +
+	    ztest_random(8000));
+	lr = (lr_remove_t *)&itx->itx_lr;
+	lr->lr_doid = object;
+	bcopy(name, (char *)(lr + 1), namesize);
+
+	return (zil_itx_assign(zilog, itx, tx));
+}
+#endif /* lint */
+
 void
 ztest_dmu_objset_create_destroy(ztest_args_t *za)
 {
@@ -1227,7 +1249,7 @@ ztest_dmu_objset_create_destroy(ztest_args_t *za)
 			dmu_tx_commit(tx);
 		}
 		if (ztest_random(5) == 0) {
-			zil_commit(zilog, seq, FSYNC);
+			zil_commit(zilog, seq, object);
 		}
 		if (ztest_random(100) == 0) {
 			error = zil_suspend(zilog);
@@ -2754,11 +2776,15 @@ ztest_verify_blocks(char *pool)
 	int status;
 	char zdb[MAXPATHLEN + MAXNAMELEN + 20];
 	char zbuf[1024];
+	char *bin;
 	FILE *fp;
 
+	(void) realpath(getexecname(), zdb);
+
+	/* zdb lives in /usr/sbin, while ztest lives in /usr/bin */
+	bin = strstr(zdb, "/usr/bin/");
 	/* LINTED */
-	/* zfs-fuse: ztest is never installed, so zdb should be in ../zdb/ */
-	(void) sprintf(zdb, "../zdb/zdb -bc%s%s -U -O %s %s",
+	(void) sprintf(bin, "/usr/sbin/zdb -bc%s%s -U -O %s %s",
 	    zopt_verbose >= 3 ? "s" : "",
 	    zopt_verbose >= 4 ? "v" : "",
 	    ztest_random(2) == 0 ? "pre" : "post", pool);
@@ -3309,7 +3335,7 @@ main(int argc, char **argv)
 			exit(0);
 		}
 
-		while (waitpid(pid, &status, 0) != pid)
+		while (waitpid(pid, &status, WEXITED) != pid)
 			continue;
 
 		if (WIFEXITED(status)) {
@@ -3319,7 +3345,7 @@ main(int argc, char **argv)
 				    WEXITSTATUS(status));
 				exit(2);
 			}
-		} else if (WIFSIGNALED(status)) {
+		} else {
 			if (WTERMSIG(status) != SIGKILL) {
 				(void) fprintf(stderr,
 				    "child died with signal %d\n",
@@ -3327,9 +3353,6 @@ main(int argc, char **argv)
 				exit(3);
 			}
 			kills++;
-		} else {
-			(void) fprintf(stderr, "something strange happened to child\n");
-			exit(4);
 		}
 
 		iters++;
