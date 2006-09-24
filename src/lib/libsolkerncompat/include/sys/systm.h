@@ -33,6 +33,7 @@
 #include <sys/dditypes.h>
 
 #include <string.h>
+#include <errno.h>
 
 extern uint64_t physmem;
 
@@ -43,6 +44,35 @@ extern uint64_t physmem;
 extern struct vnode *rootdir;	/* pointer to vnode of root directory */
 
 extern void delay(clock_t ticks);
+
+static inline void ovbcopy(const void *from, void *to, size_t count)
+{
+	memmove(to, from, count);
+}
+
+static inline int copystr(const char *from, char *to, size_t maxlength, size_t *lencopied)
+{
+	if(maxlength == 0)
+		return ENAMETOOLONG;
+	if(maxlength < 0)
+		return EFAULT;
+
+	size_t length = strlen(from);
+	if(length >= maxlength) {
+		strncpy(to, from, maxlength - 1);
+		to[maxlength - 1] = '\0';
+		if(lencopied != NULL)
+			*lencopied = maxlength;
+		return ENAMETOOLONG;
+	}
+
+	strcpy(to, from);
+	if(lencopied != NULL)
+		*lencopied = length + 1;
+	return 0;
+}
+
+#define copyinstr(from,to,max,len) copystr(from,to,max,len)
 
 /*
  * These must be implemented in the program itself.
