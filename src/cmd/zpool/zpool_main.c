@@ -41,7 +41,6 @@
 #include <strings.h>
 #include <unistd.h>
 #include <priv.h>
-#include <zfsfuse.h>
 
 #include <sys/stat.h>
 
@@ -953,7 +952,7 @@ show_import(nvlist_t *config)
 	reason = zpool_import_status(config, &msgid);
 
 	(void) printf("  pool: %s\n", name);
-	(void) printf("    id: %llu\n", (u_longlong_t) guid);
+	(void) printf("    id: %llu\n", guid);
 	(void) printf(" state: %s", health);
 	if (pool_state == POOL_STATE_DESTROYED)
 	    (void) printf(" (DESTROYED)");
@@ -1833,7 +1832,7 @@ list_callback(zpool_handle_t *zhp, void *data)
 				uint64_t capacity = (total == 0 ? 0 :
 				    (used * 100 / total));
 				(void) snprintf(buf, sizeof (buf), "%llu%%",
-				    (u_longlong_t) capacity);
+				    capacity);
 			}
 			break;
 
@@ -2625,8 +2624,8 @@ print_error_log(zpool_handle_t *zhp)
 
 	(void) printf("errors: The following persistent errors have been "
 	    "detected:\n\n");
-	(void) printf("%8s  %-*s  %-*s  %s\n", "", (int) maxdsname, "DATASET",
-	    (int) maxobjname, "OBJECT", "RANGE");
+	(void) printf("%8s  %-*s  %-*s  %s\n", "", maxdsname, "DATASET",
+	    maxobjname, "OBJECT", "RANGE");
 
 	for (i = 0; i < nelem; i++) {
 		nv = log[i];
@@ -2638,8 +2637,8 @@ print_error_log(zpool_handle_t *zhp)
 		verify(nvlist_lookup_string(nv, ZPOOL_ERR_RANGE,
 		    &range) == 0);
 
-		(void) printf("%8s  %-*s  %-*s  %s\n", "", (int) maxdsname,
-		    dsname, (int) maxobjname, objname, range);
+		(void) printf("%8s  %-*s  %-*s  %s\n", "", maxdsname,
+		    dsname, maxobjname, objname, range);
 	}
 }
 
@@ -2871,7 +2870,7 @@ status_callback(zpool_handle_t *zhp, void *data)
 				    "errors\n"));
 			else if (!cbp->cb_verbose)
 				(void) printf(gettext("errors: %llu data "
-				    "errors, use '-v' for a list\n"), (u_longlong_t) nerr);
+				    "errors, use '-v' for a list\n"), nerr);
 			else
 				print_error_log(zhp);
 		}
@@ -2963,7 +2962,7 @@ upgrade_cb(zpool_handle_t *zhp, void *arg)
 				cbp->cb_first = B_FALSE;
 			}
 
-			(void) printf("%2llu   %s\n", (u_longlong_t) version,
+			(void) printf("%2llu   %s\n", version,
 			    zpool_get_name(zhp));
 		} else {
 			cbp->cb_first = B_FALSE;
@@ -2984,7 +2983,7 @@ upgrade_cb(zpool_handle_t *zhp, void *arg)
 			cbp->cb_first = B_FALSE;
 		}
 
-		(void) printf("%2llu   %s\n", (u_longlong_t) version,
+		(void) printf("%2llu   %s\n", version,
 		    zpool_get_name(zhp));
 	}
 
@@ -3134,7 +3133,7 @@ main(int argc, char **argv)
 
 	if ((g_zfs = libzfs_init()) == NULL) {
 		(void) fprintf(stderr, gettext("internal error: failed to "
-		    "initialize ZFS library"));
+		    "initialize ZFS library\n"));
 		return (1);
 	}
 
@@ -3177,8 +3176,7 @@ main(int argc, char **argv)
 	 */
 	if (strcmp(cmdname, "freeze") == 0 && argc == 3) {
 		char buf[16384];
-		/* zfs-fuse: zfsfuse_open() connects to the UNIX domain socket */
-		int fd = zfsfuse_open(ZFS_DEV_NAME, O_RDWR);
+		int fd = open(ZFS_DEV, O_RDWR);
 		(void) strcpy((void *)buf, argv[2]);
 		return (!!ioctl(fd, ZFS_IOC_POOL_FREEZE, buf));
 	}

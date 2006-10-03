@@ -37,6 +37,7 @@
 #include <sys/arc.h>
 #include "zfs_namecheck.h"
 
+static uint64_t dsl_dir_space_accounted(dsl_dir_t *dd);
 static uint64_t dsl_dir_estimated_space(dsl_dir_t *dd);
 static uint64_t dsl_dir_space_available(dsl_dir_t *dd,
     dsl_dir_t *ancestor, int64_t delta, int ondiskonly);
@@ -222,7 +223,7 @@ getcomponent(const char *path, char *component, const char **nextp)
 {
 	char *p;
 	if (path == NULL)
-		return (0);
+		return (ENOENT);
 	/* This would be a good place to reserve some namespace... */
 	p = strpbrk(path, "/@");
 	if (p && (p[1] == '/' || p[1] == '@')) {
@@ -284,8 +285,6 @@ dsl_dir_open_spa(spa_t *spa, const char *name, void *tag,
 
 	dprintf("%s\n", name);
 
-	if (name == NULL)
-		return (ENOENT);
 	err = getcomponent(name, buf, &next);
 	if (err)
 		return (err);
