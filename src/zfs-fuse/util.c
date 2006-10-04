@@ -115,27 +115,15 @@ int do_mount(char *spec, char *dir, int mflag, char *opt)
 		return ENOMEM;
 	}
 
-	struct fuse_args args = FUSE_ARGS_INIT(0, NULL);
-
-	if(fuse_opt_add_arg(&args, "") == -1 ||
-	   fuse_opt_add_arg(&args, "-o") == -1 ||
-	   fuse_opt_add_arg(&args, fuse_opts) == -1) {
-		fuse_opt_free_args(&args);
-		free(fuse_opts);
-		VERIFY(do_umount(vfs) == 0);
-		return ENOMEM;
-	}
+	int fd = fuse_mount(dir, fuse_opts);
 	free(fuse_opts);
-
-	int fd = fuse_mount(dir, &args);
 
 	if(fd == -1) {
 		VERIFY(do_umount(vfs) == 0);
 		return EIO;
 	}
 
-	struct fuse_session *se = fuse_lowlevel_new(&args, &zfs_operations, sizeof(zfs_operations), vfs);
-	fuse_opt_free_args(&args);
+	struct fuse_session *se = fuse_lowlevel_new(NULL, &zfs_operations, sizeof(zfs_operations), vfs);
 
 	if(se == NULL) {
 		VERIFY(do_umount(vfs) == 0); /* ZFSFUSE: FIXME?? */
