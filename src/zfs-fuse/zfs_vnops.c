@@ -156,7 +156,6 @@
  */
 
 /* ARGSUSED */
-#if 0
 static int
 zfs_open(vnode_t **vpp, int flag, cred_t *cr)
 {
@@ -826,7 +825,6 @@ no_tx_done:
 	ZFS_EXIT(zfsvfs);
 	return (0);
 }
-#endif
 
 void
 zfs_get_done(dmu_buf_t *db, void *vrl)
@@ -931,7 +929,6 @@ out:
 }
 
 /*ARGSUSED*/
-#if 0
 static int
 zfs_access(vnode_t *vp, int mode, int flags, cred_t *cr)
 {
@@ -1932,7 +1929,7 @@ zfs_setattr(vnode_t *vp, vattr_t *vap, int flags, cred_t *cr,
 	vattr_t		oldva;
 	uint_t		mask = vap->va_mask;
 	uint_t		saved_mask;
-	int		trim_mask = FALSE;
+	int		trim_mask = 0;
 	uint64_t	new_mode;
 	znode_t		*attrzp;
 	int		need_policy = FALSE;
@@ -2026,8 +2023,7 @@ top:
 				 * Remove setuid/setgid for non-privileged users
 				 */
 				secpolicy_setid_clear(vap, cr);
-				trim_mask = TRUE;
-				saved_mask = vap->va_mask;
+				trim_mask = (mask & (AT_UID|AT_GID));
 			} else {
 				need_policy =  TRUE;
 			}
@@ -2036,25 +2032,40 @@ top:
 		}
 	}
 
-	if (mask & AT_MODE)
-		need_policy = TRUE;
+	mutex_enter(&zp->z_lock);
+	oldva.va_mode = pzp->zp_mode;
+	oldva.va_uid = zp->z_phys->zp_uid;
+	oldva.va_gid = zp->z_phys->zp_gid;
+	mutex_exit(&zp->z_lock);
+
+	if (mask & AT_MODE) {
+		if (zfs_zaccess_v4_perm(zp, ACE_WRITE_ACL, cr) == 0) {
+			err = secpolicy_setid_setsticky_clear(vp, vap,
+			    &oldva, cr);
+			if (err) {
+				ZFS_EXIT(zfsvfs);
+				return (err);
+			}
+			trim_mask |= AT_MODE;
+		} else {
+			need_policy = TRUE;
+		}
+	}
 
 	if (need_policy) {
-		mutex_enter(&zp->z_lock);
-		oldva.va_mode = pzp->zp_mode;
-		oldva.va_uid = zp->z_phys->zp_uid;
-		oldva.va_gid = zp->z_phys->zp_gid;
-		mutex_exit(&zp->z_lock);
-
 		/*
 		 * If trim_mask is set then take ownership
-		 * has been granted.  In that case remove
-		 * UID|GID from mask so that
+		 * has been granted or write_acl is present and user
+		 * has the ability to modify mode.  In that case remove
+		 * UID|GID and or MODE from mask so that
 		 * secpolicy_vnode_setattr() doesn't revoke it.
 		 */
-		if (trim_mask)
-			vap->va_mask &= ~(AT_UID|AT_GID);
 
+		if (trim_mask) {
+			saved_mask = vap->va_mask;
+			vap->va_mask &= ~trim_mask;
+
+		}
 		err = secpolicy_vnode_setattr(cr, vp, vap, &oldva, flags,
 		    (int (*)(void *, int, cred_t *))zfs_zaccess_rwx, zp);
 		if (err) {
@@ -2063,7 +2074,7 @@ top:
 		}
 
 		if (trim_mask)
-			vap->va_mask |= (saved_mask & (AT_UID|AT_GID));
+			vap->va_mask |= saved_mask;
 	}
 
 	/*
@@ -2957,7 +2968,6 @@ out:
 	ZFS_EXIT(zfsvfs);
 	return (error);
 }
-#endif
 
 void
 zfs_inactive(vnode_t *vp, cred_t *cr)
@@ -3028,7 +3038,6 @@ zfs_inactive(vnode_t *vp, cred_t *cr)
  *		EINVAL if new offset invalid
  */
 /* ARGSUSED */
-#if 0
 static int
 zfs_seek(vnode_t *vp, offset_t ooff, offset_t *noffp)
 {
@@ -3773,4 +3782,3 @@ const fs_operation_def_t zfs_evnodeops_template[] = {
 	VOPNAME_PATHCONF, zfs_pathconf,
 	NULL, NULL
 };
-#endif
