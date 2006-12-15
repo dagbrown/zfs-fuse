@@ -35,15 +35,10 @@
 extern "C" {
 #endif
 
-typedef struct zvol_stats {
-	uint64_t	zv_volsize;
-	uint64_t	zv_volblocksize;
-} zvol_stats_t;
-
 #ifdef _KERNEL
 extern int zvol_check_volsize(uint64_t volsize, uint64_t blocksize);
 extern int zvol_check_volblocksize(uint64_t volblocksize);
-extern int zvol_get_stats(objset_t *os, zvol_stats_t *zvs);
+extern int zvol_get_stats(objset_t *os, nvlist_t *nv);
 extern void zvol_create_cb(objset_t *os, void *arg, dmu_tx_t *tx);
 extern int zvol_create_minor(const char *, dev_t);
 extern int zvol_remove_minor(const char *);
@@ -52,15 +47,11 @@ extern int zvol_set_volblocksize(const char *, uint64_t);
 
 extern int zvol_open(dev_t *devp, int flag, int otyp, cred_t *cr);
 extern int zvol_close(dev_t dev, int flag, int otyp, cred_t *cr);
-#if 0
 extern int zvol_strategy(buf_t *bp);
-#endif
 extern int zvol_read(dev_t dev, uio_t *uiop, cred_t *cr);
 extern int zvol_write(dev_t dev, uio_t *uiop, cred_t *cr);
-#if 0
 extern int zvol_aread(dev_t dev, struct aio_req *aio, cred_t *cr);
 extern int zvol_awrite(dev_t dev, struct aio_req *aio, cred_t *cr);
-#endif
 extern int zvol_ioctl(dev_t dev, int cmd, intptr_t arg, int flag, cred_t *cr,
     int *rvalp);
 extern int zvol_busy(void);

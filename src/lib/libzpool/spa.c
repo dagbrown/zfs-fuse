@@ -55,6 +55,8 @@
 #include <sys/fs/zfs.h>
 #include <sys/callb.h>
 
+int zio_taskq_threads = 8;
+
 /*
  * ==========================================================================
  * SPA state manipulation (open/create/destroy/import/export)
@@ -115,14 +117,23 @@ spa_activate(spa_t *spa)
 
 	for (t = 0; t < ZIO_TYPES; t++) {
 		spa->spa_zio_issue_taskq[t] = taskq_create("spa_zio_issue",
-		    8, maxclsyspri, 50, INT_MAX,
+		    zio_taskq_threads, maxclsyspri, 50, INT_MAX,
 		    TASKQ_PREPOPULATE);
 		spa->spa_zio_intr_taskq[t] = taskq_create("spa_zio_intr",
-		    8, maxclsyspri, 50, INT_MAX,
+		    zio_taskq_threads, maxclsyspri, 50, INT_MAX,
 		    TASKQ_PREPOPULATE);
 	}
 
 	rw_init(&spa->spa_traverse_lock, NULL, RW_DEFAULT, NULL);
+
+	mutex_init(&spa->spa_async_lock, NULL, MUTEX_DEFAULT, NULL);
+	mutex_init(&spa->spa_config_cache_lock, NULL, MUTEX_DEFAULT, NULL);
+	mutex_init(&spa->spa_scrub_lock, NULL, MUTEX_DEFAULT, NULL);
+	mutex_init(&spa->spa_errlog_lock, NULL, MUTEX_DEFAULT, NULL);
+	mutex_init(&spa->spa_errlist_lock, NULL, MUTEX_DEFAULT, NULL);
+	mutex_init(&spa->spa_config_lock.scl_lock, NULL, MUTEX_DEFAULT, NULL);
+	mutex_init(&spa->spa_sync_bplist.bpl_lock, NULL, MUTEX_DEFAULT, NULL);
+	mutex_init(&spa->spa_history_lock, NULL, MUTEX_DEFAULT, NULL);
 
 	list_create(&spa->spa_dirty_list, sizeof (vdev_t),
 	    offsetof(vdev_t, vdev_dirty_node));
@@ -436,7 +447,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	 * Try to open all vdevs, loading each label in the process.
 	 */
 	if (vdev_open(rvd) != 0) {
-		dprintf("spa_load(): error in vdev_open()\n");
 		error = ENXIO;
 		goto out;
 	}
@@ -456,7 +466,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	}
 
 	if (rvd->vdev_state <= VDEV_STATE_CANT_OPEN) {
-		dprintf("spa_load(): rvd->vdev_state <= VDEV_STATE_CANT_OPEN\n");
 		error = ENXIO;
 		goto out;
 	}
@@ -475,7 +484,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	 * If we weren't able to find a single valid uberblock, return failure.
 	 */
 	if (ub->ub_txg == 0) {
-		dprintf("spa_load(): can't find single valid uberblock\n");
 		vdev_set_state(rvd, B_TRUE, VDEV_STATE_CANT_OPEN,
 		    VDEV_AUX_CORRUPT_DATA);
 		error = ENXIO;
@@ -497,7 +505,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	 * incomplete configuration.
 	 */
 	if (rvd->vdev_guid_sum != ub->ub_guid_sum && mosconfig) {
-		dprintf("spa_load(): vdev guid sum doesn't match the uberblock\n");
 		vdev_set_state(rvd, B_TRUE, VDEV_STATE_CANT_OPEN,
 		    VDEV_AUX_BAD_GUID_SUM);
 		error = ENXIO;
@@ -512,7 +519,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	spa->spa_first_txg = spa_last_synced_txg(spa) + 1;
 	error = dsl_pool_open(spa, spa->spa_first_txg, &spa->spa_dsl_pool);
 	if (error) {
-		dprintf("spa_load(): error %i in dsl_pool_open()\n", error);
 		vdev_set_state(rvd, B_TRUE, VDEV_STATE_CANT_OPEN,
 		    VDEV_AUX_CORRUPT_DATA);
 		goto out;
@@ -595,6 +601,20 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	}
 
 	/*
+	 * Load the history object.  If we have an older pool, this
+	 * will not be present.
+	 */
+	error = zap_lookup(spa->spa_meta_objset,
+	    DMU_POOL_DIRECTORY_OBJECT, DMU_POOL_HISTORY,
+	    sizeof (uint64_t), 1, &spa->spa_history);
+	if (error != 0 && error != ENOENT) {
+		vdev_set_state(rvd, B_TRUE, VDEV_STATE_CANT_OPEN,
+		    VDEV_AUX_CORRUPT_DATA);
+		error = EIO;
+		goto out;
+	}
+
+	/*
 	 * Load any hot spares for this pool.
 	 */
 	error = zap_lookup(spa->spa_meta_objset, DMU_POOL_DIRECTORY_OBJECT,
@@ -637,7 +657,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	 * indicates one or more toplevel vdevs are faulted.
 	 */
 	if (rvd->vdev_state <= VDEV_STATE_CANT_OPEN) {
-		dprintf("spa_load(): one or more toplevel vdevs are faulted\n");
 		error = ENXIO;
 		goto out;
 	}
@@ -689,8 +708,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 out:
 	if (error && error != EBADF)
 		zfs_ereport_post(FM_EREPORT_ZFS_POOL, spa, NULL, NULL, 0, 0);
-	if (error)
-		dprintf("spa_load(): error %i\n", error);
 	spa->spa_load_state = SPA_LOAD_NONE;
 	spa->spa_ena = 0;
 
@@ -1105,6 +1122,11 @@ spa_create(const char *pool, nvlist_t *nvroot, const char *altroot)
 	    sizeof (uint64_t), 1, &spa->spa_sync_bplist_obj, tx) != 0) {
 		cmn_err(CE_PANIC, "failed to add bplist");
 	}
+
+	/*
+	 * Create the pool's history object.
+	 */
+	spa_history_create_obj(spa, tx);
 
 	dmu_tx_commit(tx);
 
@@ -2714,6 +2736,7 @@ spa_sync_spares(spa_t *spa, dmu_tx_t *tx)
 	}
 
 	spa_sync_nvlist(spa, spa->spa_spares_object, nvroot, tx);
+	nvlist_free(nvroot);
 
 	spa->spa_sync_spares = B_FALSE;
 }

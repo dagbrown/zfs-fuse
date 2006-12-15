@@ -40,7 +40,6 @@
 #include <sys/mnttab.h>
 
 #include <libzfs.h>
-#include <zfsfuse.h>
 
 #include "libzfs_impl.h"
 
@@ -149,6 +148,8 @@ libzfs_error_description(libzfs_handle_t *hdl)
 		return (dgettext(TEXT_DOMAIN, "invalid vdev configuration"));
 	case EZFS_RECURSIVE:
 		return (dgettext(TEXT_DOMAIN, "recursive dataset dependency"));
+	case EZFS_NOHISTORY:
+		return (dgettext(TEXT_DOMAIN, "no history available"));
 	case EZFS_UNKNOWN:
 		return (dgettext(TEXT_DOMAIN, "unknown error"));
 	default:
@@ -413,13 +414,13 @@ zfs_nicenum(uint64_t num, char *buf, size_t buflen)
 	u = " KMGTPE"[index];
 
 	if (index == 0) {
-		(void) snprintf(buf, buflen, "%llu", (u_longlong_t) n);
+		(void) snprintf(buf, buflen, "%llu", n);
 	} else if ((num & ((1ULL << 10 * index) - 1)) == 0) {
 		/*
 		 * If this is an even multiple of the base, always display
 		 * without any decimal precision.
 		 */
-		(void) snprintf(buf, buflen, "%llu%c", (u_longlong_t) n, u);
+		(void) snprintf(buf, buflen, "%llu%c", n, u);
 	} else {
 		/*
 		 * We want to choose a precision that reflects the best choice
@@ -455,13 +456,12 @@ libzfs_init(void)
 		return (NULL);
 	}
 
-	/* ZFSFUSE */
-	if ((hdl->libzfs_fd = zfsfuse_open(ZFS_DEV_NAME, O_RDWR)) == -1) {
+	if ((hdl->libzfs_fd = open(ZFS_DEV, O_RDWR)) < 0) {
 		free(hdl);
 		return (NULL);
 	}
 
-	if ((hdl->libzfs_mnttab = setmntent(MNTTAB, "r")) == NULL) {
+	if ((hdl->libzfs_mnttab = fopen(MNTTAB, "r")) == NULL) {
 		(void) close(hdl->libzfs_fd);
 		free(hdl);
 		return (NULL);
@@ -477,7 +477,7 @@ libzfs_fini(libzfs_handle_t *hdl)
 {
 	(void) close(hdl->libzfs_fd);
 	if (hdl->libzfs_mnttab)
-		(void) endmntent(hdl->libzfs_mnttab);
+		(void) fclose(hdl->libzfs_mnttab);
 	if (hdl->libzfs_sharetab)
 		(void) fclose(hdl->libzfs_sharetab);
 	namespace_clear(hdl);
@@ -504,10 +504,10 @@ int
 zcmd_alloc_dst_nvlist(libzfs_handle_t *hdl, zfs_cmd_t *zc, size_t len)
 {
 	if (len == 0)
-		len = 1024;
+		len = 2048;
 	zc->zc_nvlist_dst_size = len;
 	if ((zc->zc_nvlist_dst = (uint64_t)(uintptr_t)
-	    zfs_alloc(hdl, zc->zc_nvlist_dst_size)) == (uint64_t)(uintptr_t) NULL)
+	    zfs_alloc(hdl, zc->zc_nvlist_dst_size)) == NULL)
 		return (-1);
 
 	return (0);
@@ -524,17 +524,14 @@ zcmd_expand_dst_nvlist(libzfs_handle_t *hdl, zfs_cmd_t *zc)
 	free((void *)(uintptr_t)zc->zc_nvlist_dst);
 	if ((zc->zc_nvlist_dst = (uint64_t)(uintptr_t)
 	    zfs_alloc(hdl, zc->zc_nvlist_dst_size))
-	    == (uint64_t)(uintptr_t) NULL)
+	    == NULL)
 		return (-1);
 
 	return (0);
 }
 
 /*
- * Called to free the destination nvlist stored in the command structure.  This
- * is only needed if the caller must abort abnormally.  The various other
- * zcmd_*() routines will free it on failure (or on success, for
- * zcmd_read_nvlist).
+ * Called to free the src and dst nvlists stored in the command structure.
  */
 void
 zcmd_free_nvlists(zfs_cmd_t *zc)

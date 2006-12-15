@@ -81,9 +81,8 @@
 
 #include "zpool_util.h"
 
-/* ZFSFUSE */
-#define	DISK_ROOT	"/dev"
-#define	RDISK_ROOT	"/dev"
+#define	DISK_ROOT	"/dev/dsk"
+#define	RDISK_ROOT	"/dev/rdsk"
 #define	BACKUP_SLICE	"s2"
 
 /*
@@ -116,8 +115,6 @@ vdev_error(const char *fmt, ...)
 	va_end(ap);
 }
 
-/* zfs-fuse: libdiskmgt not ported */
-#if 0
 static void
 libdiskmgt_error(int error)
 {
@@ -279,7 +276,7 @@ check_device(const char *path, boolean_t force, boolean_t isspare)
 
 	return (check_slice(path, force, B_FALSE, isspare));
 }
-#endif
+
 /*
  * Check that a file is valid.  All we can do in this case is check that it's
  * not in use by another pool.
@@ -348,8 +345,6 @@ check_file(const char *file, boolean_t force, boolean_t isspare)
 static boolean_t
 is_whole_disk(const char *arg, struct stat64 *statbuf)
 {
-	return B_FALSE;
-#if 0
 	char path[MAXPATHLEN];
 
 	(void) snprintf(path, sizeof (path), "%s%s", arg, BACKUP_SLICE);
@@ -357,7 +352,6 @@ is_whole_disk(const char *arg, struct stat64 *statbuf)
 		return (B_TRUE);
 
 	return (B_FALSE);
-#endif
 }
 
 /*
@@ -824,8 +818,6 @@ check_replication(nvlist_t *config, nvlist_t *newroot)
  * Label an individual disk.  The name provided is the short name, stripped of
  * any leading /dev path.
  */
-/* zfs-fuse: EFI labels not supported yet */
-#if 0
 int
 label_disk(char *name)
 {
@@ -901,7 +893,6 @@ label_disk(char *name)
 	efi_free(vtoc);
 	return (0);
 }
-#endif
 
 /*
  * Go through and find any whole disks in the vdev specification, labelling them
@@ -918,9 +909,13 @@ make_disks(nvlist_t *nv)
 {
 	nvlist_t **child;
 	uint_t c, children;
-	char *type, *path;
+	char *type, *path, *diskname;
+	char buf[MAXPATHLEN];
 	uint64_t wholedisk;
+	int fd;
 	int ret;
+	ddi_devid_t devid;
+	char *minor = NULL, *devid_str = NULL;
 
 	verify(nvlist_lookup_string(nv, ZPOOL_CONFIG_TYPE, &type) == 0);
 
@@ -941,11 +936,6 @@ make_disks(nvlist_t *nv)
 		    &wholedisk) != 0 || !wholedisk)
 			return (0);
 
-		/* zfs-fuse: TODO */
-		fprintf(stderr, gettext("sorry, whole disks are not supported yet\n"));
-		return -1;
-
-#if 0
 		diskname = strrchr(path, '/');
 		assert(diskname != NULL);
 		diskname++;
@@ -988,7 +978,6 @@ make_disks(nvlist_t *nv)
 		(void) close(fd);
 
 		return (0);
-#endif
 	}
 
 	for (c = 0; c < children; c++)
@@ -1007,8 +996,6 @@ make_disks(nvlist_t *nv)
 /*
  * Determine if the given path is a hot spare within the given configuration.
  */
-/* zfs-fuse: this function is only used inside check_in_use() */
-#if 0
 static boolean_t
 is_spare(nvlist_t *config, const char *path)
 {
@@ -1051,7 +1038,6 @@ is_spare(nvlist_t *config, const char *path)
 
 	return (B_FALSE);
 }
-#endif
 
 /*
  * Go through and find any devices that are in use.  We rely on libdiskmgt for
@@ -1061,8 +1047,6 @@ int
 check_in_use(nvlist_t *config, nvlist_t *nv, int force, int isreplacing,
     int isspare)
 {
-/* zfs-fuse: TODO */
-#if 0
 	nvlist_t **child;
 	uint_t c, children;
 	char *type, *path;
@@ -1113,7 +1097,7 @@ check_in_use(nvlist_t *config, nvlist_t *nv, int force, int isreplacing,
 			if ((ret = check_in_use(config, child[c], force,
 			    isreplacing, B_TRUE)) != 0)
 				return (ret);
-#endif
+
 	return (0);
 }
 
