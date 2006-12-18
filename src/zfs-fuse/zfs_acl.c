@@ -79,6 +79,8 @@
 
 #define	OGE_PAD	6		/* traditional owner/group/everyone ACES */
 
+/* ZFSFUSE: not implemented */
+#if 0
 static int zfs_ace_can_use(znode_t *zp, ace_t *);
 
 static zfs_acl_t *
@@ -1601,3 +1603,5 @@ zfs_zaccess_rename(znode_t *sdzp, znode_t *szp, znode_t *tdzp,
 
 	return (error);
 }
+#endif
+
