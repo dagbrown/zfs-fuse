@@ -812,15 +812,15 @@ zfs_make_xattrdir(znode_t *zp, vattr_t *vap, vnode_t **xvpp, cred_t *cr)
  *
  *	IN:	zp	- znode to obtain attribute directory from
  *		cr	- credentials of caller
+ *		flags	- flags from the VOP_LOOKUP call
  *
  *	OUT:	xzpp	- pointer to extended attribute znode
  *
  *	RETURN:	0 on success
  *		error number on failure
  */
-#if 0
 int
-zfs_get_xattrdir(znode_t *zp, vnode_t **xvpp, cred_t *cr)
+zfs_get_xattrdir(znode_t *zp, vnode_t **xvpp, cred_t *cr, int flags)
 {
 	zfsvfs_t	*zfsvfs = zp->z_zfsvfs;
 	znode_t		*xzp;
@@ -839,6 +839,11 @@ top:
 	}
 
 	ASSERT(zp->z_phys->zp_xattr == 0);
+
+	if (!(flags & CREATE_XATTR_DIR)) {
+		zfs_dirent_unlock(dl);
+		return (ENOENT);
+	}
 
 	if (zfsvfs->z_vfs->vfs_flag & VFS_RDONLY) {
 		zfs_dirent_unlock(dl);
@@ -871,7 +876,6 @@ top:
 
 	return (error);
 }
-#endif
 
 /*
  * Decide whether it is okay to remove within a sticky directory.

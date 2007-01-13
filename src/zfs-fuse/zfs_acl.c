@@ -879,7 +879,6 @@ zfs_acl_chmod(znode_t *zp, uint64_t mode, zfs_acl_t *aclp,
 }
 
 
-
 int
 zfs_acl_chmod_setattr(znode_t *zp, uint64_t mode, dmu_tx_t *tx)
 {
@@ -1213,7 +1212,7 @@ top:
 	zfs_acl_free(aclp);
 	zfs_log_acl(zilog, tx, TX_ACL, zp, aclcnt, acep);
 	dmu_tx_commit(tx);
-
+done:
 	mutex_exit(&zp->z_acl_lock);
 	mutex_exit(&zp->z_lock);
 
