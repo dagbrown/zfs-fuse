@@ -58,11 +58,12 @@
 
 int zfsfstype;
 vfsops_t *zfs_vfsops = NULL;
-static major_t zfs_major;
-static minor_t zfs_minor;
+/* ZFSFUSE: not needed */
+/*static major_t zfs_major;
+static minor_t zfs_minor;*/
 static kmutex_t	zfs_dev_mtx;
 
-extern char zfs_bootpath[BO_MAXOBJNAME];
+/*extern char zfs_bootpath[BO_MAXOBJNAME];*/
 
 static int zfs_mount(vfs_t *vfsp, vnode_t *mvp, struct mounta *uap, cred_t *cr);
 static int zfs_umount(vfs_t *vfsp, int fflag, cred_t *cr);
@@ -85,10 +86,12 @@ static const fs_operation_def_t zfs_vfsops_template[] = {
 	NULL, NULL
 };
 
+#if 0
 static const fs_operation_def_t zfs_vfsops_eio_template[] = {
 	VFSNAME_FREEVFS, (fs_generic_func_p) zfs_freevfs,
 	NULL, NULL
 };
+#endif
 
 /*
  * We need to keep a count of active fs's.
@@ -97,6 +100,7 @@ static const fs_operation_def_t zfs_vfsops_eio_template[] = {
  */
 static uint32_t	zfs_active_fs_count = 0;
 
+#if 0
 static char *noatime_cancel[] = { MNTOPT_ATIME, NULL };
 static char *atime_cancel[] = { MNTOPT_NOATIME, NULL };
 static char *noxattr_cancel[] = { MNTOPT_XATTR, NULL };
@@ -117,6 +121,7 @@ static mntopts_t zfs_mntopts = {
 	sizeof (mntopts) / sizeof (mntopt_t),
 	mntopts
 };
+#endif
 
 /*ARGSUSED*/
 int
@@ -126,6 +131,8 @@ zfs_sync(vfs_t *vfsp, short flag, cred_t *cr)
 	 * Data integrity is job one.  We don't want a compromised kernel
 	 * writing to the storage pool, so we never sync during panic.
 	 */
+/* ZFSFUSE: not used/needed */
+#if 0
 	if (panicstr)
 		return (0);
 
@@ -137,6 +144,7 @@ zfs_sync(vfs_t *vfsp, short flag, cred_t *cr)
 	 */
 	if (flag & SYNC_ATTR)
 		return (0);
+#endif
 
 	if (vfsp != NULL) {
 		/*
@@ -162,6 +170,7 @@ zfs_sync(vfs_t *vfsp, short flag, cred_t *cr)
 	return (0);
 }
 
+#if 0
 static int
 zfs_create_unique_device(dev_t *dev)
 {
@@ -213,7 +222,7 @@ zfs_create_unique_device(dev_t *dev)
 
 	return (0);
 }
-
+#endif
 static void
 atime_changed_cb(void *arg, uint64_t newval)
 {
@@ -248,6 +257,7 @@ xattr_changed_cb(void *arg, uint64_t newval)
 	}
 }
 
+#if 0
 static void
 blksz_changed_cb(void *arg, uint64_t newval)
 {
@@ -260,7 +270,7 @@ blksz_changed_cb(void *arg, uint64_t newval)
 	zfsvfs->z_max_blksz = newval;
 	zfsvfs->z_vfs->vfs_bsize = newval;
 }
-
+#endif
 static void
 readonly_changed_cb(void *arg, uint64_t newval)
 {
@@ -329,6 +339,7 @@ exec_changed_cb(void *arg, uint64_t newval)
 	}
 }
 
+#if 0
 static void
 snapdir_changed_cb(void *arg, uint64_t newval)
 {
@@ -352,6 +363,7 @@ acl_inherit_changed_cb(void *arg, uint64_t newval)
 
 	zfsvfs->z_acl_inherit = newval;
 }
+#endif
 
 static int
 zfs_refresh_properties(vfs_t *vfsp)
@@ -404,6 +416,7 @@ zfs_refresh_properties(vfs_t *vfsp)
 	return (0);
 }
 
+#if 0
 static int
 zfs_register_callbacks(vfs_t *vfsp)
 {
@@ -539,6 +552,7 @@ unregister:
 	return (error);
 
 }
+#endif
 
 static int
 zfs_domount(vfs_t *vfsp, char *osname, cred_t *cr)
@@ -574,10 +588,12 @@ zfs_domount(vfs_t *vfsp, char *osname, cred_t *cr)
 	vfsp->vfs_bcount = 0;
 	vfsp->vfs_data = NULL;
 
-	if (zfs_create_unique_device(&mount_dev) == -1) {
+	/* ZFSFUSE: not needed */
+	/*if (zfs_create_unique_device(&mount_dev) == -1) {
 		error = ENODEV;
 		goto out;
-	}
+	}*/
+
 	ASSERT(vfs_devismounted(mount_dev) == 0);
 
 	if (error = dsl_prop_get_integer(osname, "recordsize", &recordsize,
@@ -625,9 +641,10 @@ zfs_domount(vfs_t *vfsp, char *osname, cred_t *cr)
 		xattr_changed_cb(zfsvfs, xattr);
 		zfsvfs->z_issnap = B_TRUE;
 	} else {
-		error = zfs_register_callbacks(vfsp);
+		/* ZFSFUSE: not necessary */
+		/*error = zfs_register_callbacks(vfsp);
 		if (error)
-			goto out;
+			goto out;*/
 
 		/*
 		 * Start a delete thread running.
@@ -638,14 +655,15 @@ zfs_domount(vfs_t *vfsp, char *osname, cred_t *cr)
 		 * Parse and replay the intent log.
 		 */
 		zil_replay(zfsvfs->z_os, zfsvfs, &zfsvfs->z_assign,
-		    zfs_replay_vector, (void (*)(void *))zfs_delete_wait_empty);
+		    zfs_replay_vector, (void (*)(void *))zfs_delete_wait_empty); 
 
 		if (!zil_disable)
 			zfsvfs->z_log = zil_open(zfsvfs->z_os, zfs_get_data);
 	}
 
+	/* ZFSFUSE: FIXME
 	if (!zfsvfs->z_issnap)
-		zfsctl_create(zfsvfs);
+		zfsctl_create(zfsvfs);*/
 out:
 	if (error) {
 		if (zfsvfs->z_os)
@@ -659,6 +677,7 @@ out:
 
 }
 
+#if 0
 void
 zfs_unregister_callbacks(zfsvfs_t *zfsvfs)
 {
@@ -701,10 +720,14 @@ zfs_unregister_callbacks(zfsvfs_t *zfsvfs)
 		    acl_inherit_changed_cb, zfsvfs) == 0);
 	}
 }
+#endif
 
 static int
 zfs_mountroot(vfs_t *vfsp, enum whymountroot why)
 {
+	/* ZFSFUSE: not used */
+	abort();
+#if 0
 	int error = 0;
 	int ret = 0;
 	static int zfsrootdone = 0;
@@ -784,10 +807,11 @@ out:
 	 * ROOT_REMOUNT, or ROOT_UNMOUNT, we do not support it.
 	 */
 	return (ENOTSUP);
+#endif
 }
 
 /*ARGSUSED*/
-static int
+int
 zfs_mount(vfs_t *vfsp, vnode_t *mvp, struct mounta *uap, cred_t *cr)
 {
 	char		*osname;
@@ -854,11 +878,11 @@ out:
 	return (error);
 }
 
-static int
+int
 zfs_statvfs(vfs_t *vfsp, struct statvfs64 *statp)
 {
 	zfsvfs_t *zfsvfs = vfsp->vfs_data;
-	dev32_t d32;
+	/* dev32_t d32; */
 	uint64_t refdbytes, availbytes, usedobjs, availobjs;
 
 	ZFS_ENTER(zfsvfs);
@@ -896,15 +920,17 @@ zfs_statvfs(vfs_t *vfsp, struct statvfs64 *statp)
 	statp->f_favail = statp->f_ffree;	/* no "root reservation" */
 	statp->f_files = statp->f_ffree + usedobjs;
 
-	(void) cmpldev(&d32, vfsp->vfs_dev);
-	statp->f_fsid = d32;
+	/* ZFSFUSE: not necessary? see 'man statfs' */
+	/*(void) cmpldev(&d32, vfsp->vfs_dev);
+	statp->f_fsid = d32;*/
 
 	/*
 	 * We're a zfs filesystem.
 	 */
-	(void) strcpy(statp->f_basetype, vfssw[vfsp->vfs_fstype].vsw_name);
+	/* ZFSFUSE: not necessary */
+	/*(void) strcpy(statp->f_basetype, vfssw[vfsp->vfs_fstype].vsw_name);
 
-	statp->f_flag = vf_to_stf(vfsp->vfs_flag);
+	statp->f_flag = vf_to_stf(vfsp->vfs_flag);*/
 
 	statp->f_namemax = ZFS_MAXNAMELEN;
 
@@ -936,7 +962,7 @@ zfs_root(vfs_t *vfsp, vnode_t **vpp)
 }
 
 /*ARGSUSED*/
-static int
+int
 zfs_umount(vfs_t *vfsp, int fflag, cred_t *cr)
 {
 	zfsvfs_t *zfsvfs = vfsp->vfs_data;
@@ -952,9 +978,10 @@ zfs_umount(vfs_t *vfsp, int fflag, cred_t *cr)
 	 * Unmount any snapshots mounted under .zfs before unmounting the
 	 * dataset itself.
 	 */
-	if (zfsvfs->z_ctldir != NULL &&
+	/* ZFSFUSE: FIXME */
+	/*if (zfsvfs->z_ctldir != NULL &&
 	    (ret = zfsctl_umount_snapshots(vfsp, fflag, cr)) != 0)
-		return (ret);
+		return (ret);*/
 
 	if (fflag & MS_FORCE) {
 		vfsp->vfs_flag |= VFS_UNMOUNTED;
@@ -1019,6 +1046,9 @@ zfs_umount(vfs_t *vfsp, int fflag, cred_t *cr)
 static int
 zfs_vget(vfs_t *vfsp, vnode_t **vpp, fid_t *fidp)
 {
+	/* ZFSFUSE: not used */
+	abort();
+#if 0
 	zfsvfs_t	*zfsvfs = vfsp->vfs_data;
 	znode_t		*zp;
 	uint64_t	object = 0;
@@ -1098,6 +1128,7 @@ zfs_vget(vfs_t *vfsp, vnode_t **vpp, fid_t *fidp)
 	*vpp = ZTOV(zp);
 	ZFS_EXIT(zfsvfs);
 	return (0);
+#endif
 }
 
 static void
@@ -1159,8 +1190,9 @@ zfs_objset_close(zfsvfs_t *zfsvfs)
 	/*
 	 * Unregister properties.
 	 */
-	if (!dmu_objset_is_snapshot(os))
-		zfs_unregister_callbacks(zfsvfs);
+	/* ZFSFUSE: unnecessary */
+	/* if (!dmu_objset_is_snapshot(os))
+		zfs_unregister_callbacks(zfsvfs);*/
 
 	/*
 	 * Switch zfs_inactive to behaviour without an objset.
@@ -1195,12 +1227,13 @@ zfs_objset_close(zfsvfs_t *zfsvfs)
 	/*
 	 * We can now safely destroy the '.zfs' directory node.
 	 */
+	/* ZFSFUSE: FIXME
 	if (zfsvfs->z_ctldir != NULL)
-		zfsctl_destroy(zfsvfs);
+		zfsctl_destroy(zfsvfs); */
 
 }
 
-static void
+void
 zfs_freevfs(vfs_t *vfsp)
 {
 	zfsvfs_t *zfsvfs = vfsp->vfs_data;
@@ -1217,7 +1250,7 @@ zfs_freevfs(vfs_t *vfsp)
  * from the module's _init() and _fini() entry points.
  */
 /*ARGSUSED*/
-static int
+int
 zfs_vfsinit(int fstype, char *name)
 {
 	int error;
@@ -1246,8 +1279,9 @@ zfs_vfsinit(int fstype, char *name)
 	 * Unique major number for all zfs mounts.
 	 * If we run out of 32-bit minors, we'll getudev() another major.
 	 */
-	zfs_major = ddi_name_to_major(ZFS_DRIVER);
-	zfs_minor = ZFS_MIN_MINOR;
+	/* ZFSFUSE: not needed */
+	/*zfs_major = ddi_name_to_major(ZFS_DRIVER);
+	zfs_minor = ZFS_MIN_MINOR;*/
 
 	return (0);
 }
@@ -1258,7 +1292,8 @@ zfs_init(void)
 	/*
 	 * Initialize .zfs directory structures
 	 */
-	zfsctl_init();
+	/* ZFSFUSE: TODO */
+	/* zfsctl_init(); */
 
 	/*
 	 * Initialize znode cache, vnode ops, etc...
@@ -1269,7 +1304,8 @@ zfs_init(void)
 void
 zfs_fini(void)
 {
-	zfsctl_fini();
+	/* ZFSFUSE: TODO */
+	/* zfsctl_fini(); */
 	zfs_znode_fini();
 }
 
@@ -1279,6 +1315,7 @@ zfs_busy(void)
 	return (zfs_active_fs_count != 0);
 }
 
+#if 0
 static vfsdef_t vfw = {
 	VFSDEF_VERSION,
 	MNTTYPE_ZFS,
@@ -1290,3 +1327,4 @@ static vfsdef_t vfw = {
 struct modlfs zfs_modlfs = {
 	&mod_fsops, "ZFS filesystem version " ZFS_VERSION_STRING, &vfw
 };
+#endif

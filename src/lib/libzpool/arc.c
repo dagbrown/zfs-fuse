@@ -151,8 +151,8 @@ static int arc_dead;
 /*
  * These tunables are for performance analysis.
  */
-uint64_t zfs_arc_max;
-uint64_t zfs_arc_min;
+uint64_t zfs_arc_max = 80<<20;
+uint64_t zfs_arc_min = 64<<20 + 1;
 
 /*
  * Note that buffers can be on one of 5 states:
@@ -1242,7 +1242,7 @@ arc_shrink(void)
 	if (arc.c > arc.c_min) {
 		uint64_t to_free;
 
-#ifdef _KERNEL
+#if 0
 		to_free = MAX(arc.c >> arc_shrink_shift, ptob(needfree));
 #else
 		to_free = arc.c >> arc_shrink_shift;
@@ -1268,9 +1268,8 @@ arc_shrink(void)
 static int
 arc_reclaim_needed(void)
 {
+#if 0
 	uint64_t extra;
-
-#ifdef _KERNEL
 
 	if (needfree)
 		return (1);
@@ -1345,7 +1344,7 @@ arc_kmem_reap_now(arc_reclaim_strategy_t strat)
 	extern kmem_cache_t	*zio_buf_cache[];
 	extern kmem_cache_t	*zio_data_buf_cache[];
 
-#ifdef _KERNEL
+#if 0
 	/*
 	 * First purge some DNLC entries, in case the DNLC is using
 	 * up too much memory.
@@ -2552,7 +2551,7 @@ arc_init(void)
 	/* Start out with 1/8 of all memory */
 	arc.c = physmem * PAGESIZE / 8;
 
-#ifdef _KERNEL
+#if 0
 	/*
 	 * On architectures where the physical memory can be larger
 	 * than the addressable space (intel in 32-bit mode), we may
