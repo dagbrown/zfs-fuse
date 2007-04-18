@@ -19,7 +19,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  *
  *	Copyright (c) 1984, 1986, 1987, 1988, 1989 AT&T
@@ -35,11 +35,11 @@
 extern "C" {
 #endif
 
-#define	MNTTAB		"/proc/mounts"
+#define	MNTTAB		"/etc/mnttab"
 #define	VFSTAB		"/etc/vfstab"
 #define	MNTMAXSTR	128
 
-#define	MNTTYPE_ZFS	"fuse"		/* ZFS file system */
+#define	MNTTYPE_ZFS	"zfs"		/* ZFS file system */
 #define	MNTTYPE_UFS	"ufs"		/* Unix file system */
 #define	MNTTYPE_NFS	"nfs"		/* NFS file system */
 #define	MNTTYPE_NFS3	"nfs3"		/* NFS Version 3 file system */
@@ -54,10 +54,11 @@ extern "C" {
 #define	MNTTYPE_TMPFS	"tmpfs"		/* Tmp volatile file system */
 #define	MNTTYPE_AUTOFS	"autofs"	/* Automounter ``file'' system */
 #define	MNTTYPE_MNTFS	"mntfs"		/* In-kernel mnttab */
-#define	MNTTYPE_XMEMFS	"xmemfs"	/* Extended memory FS, IA32 only */
 #define	MNTTYPE_DEV	"dev"		/* /dev file system */
 #define	MNTTYPE_CTFS	"ctfs"		/* Contract file system */
 #define	MNTTYPE_OBJFS	"objfs"		/* Kernel object file system */
+#define	MNTTYPE_SHAREFS	"sharefs"	/* Kernel sharetab file system */
+
 
 #define	MNTOPT_RO	"ro"		/* Read only */
 #define	MNTOPT_RW	"rw"		/* Read/write */

@@ -19,23 +19,24 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
 
 
 #include <assert.h>
-#include <sys/zfs_context.h>
+#include <fcntl.h>
 #include <poll.h>
-#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <fcntl.h>
-#include <sys/stat.h>
+#include <string.h>
+#include <zlib.h>
 #include <sys/spa.h>
+#include <sys/stat.h>
 #include <sys/processor.h>
-
+#include <sys/zfs_context.h>
+#include <sys/zmod.h>
 
 /*
  * Emulation of kernel services in userland.
@@ -60,6 +61,29 @@ zk_thread_create(void (*func)(), void *arg)
 
 	return ((void *)(uintptr_t)tid);
 }
+
+/*
+ * =========================================================================
+ * kstats
+ * =========================================================================
+ */
+/*ARGSUSED*/
+kstat_t *
+kstat_create(char *module, int instance, char *name, char *class,
+    uchar_t type, ulong_t ndata, uchar_t ks_flag)
+{
+	return (NULL);
+}
+
+/*ARGSUSED*/
+void
+kstat_install(kstat_t *ksp)
+{}
+
+/*ARGSUSED*/
+void
+kstat_delete(kstat_t *ksp)
+{}
 
 /*
  * =========================================================================
@@ -128,43 +152,29 @@ void
 rw_init(krwlock_t *rwlp, char *name, int type, void *arg)
 {
 	rwlock_init(&rwlp->rw_lock, USYNC_THREAD, NULL);
-	zmutex_init(&rwlp->mutex);
 	rwlp->rw_owner = NULL;
-	rwlp->thr_count = 0;
 }
 
 void
 rw_destroy(krwlock_t *rwlp)
 {
 	rwlock_destroy(&rwlp->rw_lock);
-	zmutex_destroy(&rwlp->mutex);
 	rwlp->rw_owner = (void *)-1UL;
-	rwlp->thr_count = -2;
 }
 
 void
 rw_enter(krwlock_t *rwlp, krw_t rw)
 {
-	//ASSERT(!RW_LOCK_HELD(rwlp));
+	ASSERT(!RW_LOCK_HELD(rwlp));
 	ASSERT(rwlp->rw_owner != (void *)-1UL);
 	ASSERT(rwlp->rw_owner != curthread);
 
-	if (rw == RW_READER) {
-		VERIFY(rw_rdlock(&rwlp->rw_lock) == 0);
+	if (rw == RW_READER)
+		(void) rw_rdlock(&rwlp->rw_lock);
+	else
+		(void) rw_wrlock(&rwlp->rw_lock);
 
-		mutex_enter(&rwlp->mutex);
-		ASSERT(rwlp->thr_count >= 0);
-		rwlp->thr_count++;
-		mutex_exit(&rwlp->mutex);
-		ASSERT(rwlp->rw_owner == NULL);
-	} else {
-		VERIFY(rw_wrlock(&rwlp->rw_lock) == 0);
-
-		ASSERT(rwlp->rw_owner == NULL);
-		ASSERT(rwlp->thr_count == 0);
-		rwlp->thr_count = -1;
-		rwlp->rw_owner = curthread;
-	}
+	rwlp->rw_owner = curthread;
 }
 
 void
@@ -172,19 +182,7 @@ rw_exit(krwlock_t *rwlp)
 {
 	ASSERT(rwlp->rw_owner != (void *)-1UL);
 
-	if(rwlp->rw_owner == curthread) {
-		/* Write locked */
-		ASSERT(rwlp->thr_count == -1);
-		rwlp->thr_count = 0;
-		rwlp->rw_owner = NULL;
-	} else {
-		/* Read locked */
-		ASSERT(rwlp->rw_owner == NULL);
-		mutex_enter(&rwlp->mutex);
-		ASSERT(rwlp->thr_count >= 1);
-		rwlp->thr_count--;
-		mutex_exit(&rwlp->mutex);
-	}
+	rwlp->rw_owner = NULL;
 	(void) rw_unlock(&rwlp->rw_lock);
 }
 
@@ -194,7 +192,6 @@ rw_tryenter(krwlock_t *rwlp, krw_t rw)
 	int rv;
 
 	ASSERT(rwlp->rw_owner != (void *)-1UL);
-	ASSERT(rwlp->rw_owner != curthread);
 
 	if (rw == RW_READER)
 		rv = rw_tryrdlock(&rwlp->rw_lock);
@@ -202,18 +199,7 @@ rw_tryenter(krwlock_t *rwlp, krw_t rw)
 		rv = rw_trywrlock(&rwlp->rw_lock);
 
 	if (rv == 0) {
-		if(rw == RW_READER) {
-			mutex_enter(&rwlp->mutex);
-			ASSERT(rwlp->thr_count >= 0);
-			rwlp->thr_count++;
-			mutex_exit(&rwlp->mutex);
-			ASSERT(rwlp->rw_owner == NULL);
-		} else {
-			ASSERT(rwlp->rw_owner == NULL);
-			ASSERT(rwlp->thr_count == 0);
-			rwlp->thr_count = -1;
-			rwlp->rw_owner = curthread;
-		}
+		rwlp->rw_owner = curthread;
 		return (1);
 	}
 
@@ -229,15 +215,6 @@ rw_tryupgrade(krwlock_t *rwlp)
 	return (0);
 }
 
-int rw_lock_held(krwlock_t *rwlp)
-{
-	int ret;
-	mutex_enter(&rwlp->mutex);
-	ret = rwlp->thr_count != 0;
-	mutex_exit(&rwlp->mutex);
-	return ret;
-}
-
 /*
  * =========================================================================
  * condition variables
@@ -247,8 +224,6 @@ int rw_lock_held(krwlock_t *rwlp)
 void
 cv_init(kcondvar_t *cv, char *name, int type, void *arg)
 {
-	ASSERT(type == CV_DEFAULT);
-
 	VERIFY(cond_init(cv, type, NULL) == 0);
 }
 
@@ -272,39 +247,27 @@ clock_t
 cv_timedwait(kcondvar_t *cv, kmutex_t *mp, clock_t abstime)
 {
 	int error;
-	struct timespec ts;
-	struct timeval tv;
+	timestruc_t ts;
 	clock_t delta;
 
 top:
 	delta = abstime - lbolt;
-	dprintf("thread %li is at cv_timedwait at %.2f with delta %.2f secs\n", curthread, (double) lbolt / hz, (double) delta / hz);
 	if (delta <= 0)
 		return (-1);
 
-	VERIFY(gettimeofday(&tv, NULL) == 0);
-
-	ts.tv_sec = tv.tv_sec + delta / hz;
-	ts.tv_nsec = tv.tv_usec * 1000 + (delta % hz) * (NANOSEC / hz);
-	ASSERT(ts.tv_nsec >= 0);
-
-	if(ts.tv_nsec >= NANOSEC) {
-		ts.tv_sec++;
-		ts.tv_nsec -= NANOSEC;
-	}
+	ts.tv_sec = delta / hz;
+	ts.tv_nsec = (delta % hz) * (NANOSEC / hz);
 
 	ASSERT(mutex_owner(mp) == curthread);
 	mp->m_owner = NULL;
-	error = pthread_cond_timedwait(cv, &mp->m_lock, &ts);
+	error = cond_reltimedwait(cv, &mp->m_lock, &ts);
 	mp->m_owner = curthread;
+
+	if (error == ETIME)
+		return (-1);
 
 	if (error == EINTR)
 		goto top;
-
-	dprintf("thread %li exited cv_timedwait at %.2f (rem = %.2f)\n", curthread, (double) lbolt / hz, (double) (abstime - lbolt) / hz);
-
-	if (error == ETIMEDOUT)
-		return (-1);
 
 	ASSERT(error == 0);
 
@@ -342,10 +305,39 @@ vn_open(char *path, int x1, int flags, int mode, vnode_t **vpp, int x2, int x3)
 	int fd;
 	vnode_t *vp;
 	int old_umask;
+	char realpath[MAXPATHLEN];
 	struct stat64 st;
 
-	if (!(flags & FCREAT) && stat64(path, &st) == -1)
-		return (errno);
+	/*
+	 * If we're accessing a real disk from userland, we need to use
+	 * the character interface to avoid caching.  This is particularly
+	 * important if we're trying to look at a real in-kernel storage
+	 * pool from userland, e.g. via zdb, because otherwise we won't
+	 * see the changes occurring under the segmap cache.
+	 * On the other hand, the stupid character device returns zero
+	 * for its size.  So -- gag -- we open the block device to get
+	 * its size, and remember it for subsequent VOP_GETATTR().
+	 */
+	if (strncmp(path, "/dev/", 5) == 0) {
+		char *dsk;
+		fd = open64(path, O_RDONLY);
+		if (fd == -1)
+			return (errno);
+		if (fstat64(fd, &st) == -1) {
+			close(fd);
+			return (errno);
+		}
+		close(fd);
+		(void) sprintf(realpath, "%s", path);
+		dsk = strstr(path, "/dsk/");
+		if (dsk != NULL)
+			(void) sprintf(realpath + (dsk - path) + 1, "r%s",
+			    dsk + 1);
+	} else {
+		(void) sprintf(realpath, "%s", path);
+		if (!(flags & FCREAT) && stat64(realpath, &st) == -1)
+			return (errno);
+	}
 
 	if (flags & FCREAT)
 		old_umask = umask(0);
@@ -354,7 +346,7 @@ vn_open(char *path, int x1, int flags, int mode, vnode_t **vpp, int x2, int x3)
 	 * The construct 'flags - FREAD' conveniently maps combinations of
 	 * FREAD and FWRITE to the corresponding O_RDONLY, O_WRONLY, and O_RDWR.
 	 */
-	fd = open64(path, flags - FREAD, mode);
+	fd = open64(realpath, flags - FREAD, mode);
 
 	if (flags & FCREAT)
 		(void) umask(old_umask);
@@ -531,9 +523,9 @@ __dprintf(const char *file, const char *func, int line, const char *fmt, ...)
 		if (dprintf_find_string("pid"))
 			(void) printf("%d ", getpid());
 		if (dprintf_find_string("tid"))
-			(void) printf("%u ", (unsigned int) thr_self());
-/*		if (dprintf_find_string("cpu"))
-			(void) printf("%u ", getcpuid());*/
+			(void) printf("%u ", thr_self());
+		if (dprintf_find_string("cpu"))
+			(void) printf("%u ", getcpuid());
 		if (dprintf_find_string("time"))
 			(void) printf("%llu ", gethrtime());
 		if (dprintf_find_string("long"))
@@ -576,13 +568,9 @@ panic(const char *fmt, ...)
 	va_end(adx);
 }
 
-/*PRINTFLIKE2*/
 void
-cmn_err(int ce, const char *fmt, ...)
+vcmn_err(int ce, const char *fmt, va_list adx)
 {
-	va_list adx;
-
-	va_start(adx, fmt);
 	if (ce == CE_PANIC)
 		vpanic(fmt, adx);
 	if (ce != CE_NOTE) {	/* suppress noise in userland stress testing */
@@ -590,6 +578,16 @@ cmn_err(int ce, const char *fmt, ...)
 		(void) vfprintf(stderr, fmt, adx);
 		(void) fprintf(stderr, "%s", ce_suffix[ce]);
 	}
+}
+
+/*PRINTFLIKE2*/
+void
+cmn_err(int ce, const char *fmt, ...)
+{
+	va_list adx;
+
+	va_start(adx, fmt);
+	vcmn_err(ce, fmt, adx);
 	va_end(adx);
 }
 
@@ -621,7 +619,7 @@ kobj_read_file(struct _buf *file, char *buf, unsigned size, unsigned off)
 	vn_rdwr(UIO_READ, (vnode_t *)file->_fd, buf, size, (offset_t)off,
 	    UIO_SYSSPACE, 0, 0, 0, &resid);
 
-	return (0);
+	return (size - resid);
 }
 
 void
@@ -632,15 +630,16 @@ kobj_close_file(struct _buf *file)
 }
 
 int
-kobj_fstat(intptr_t fd, struct bootstat *bst)
+kobj_get_filesize(struct _buf *file, uint64_t *size)
 {
 	struct stat64 st;
-	vnode_t *vp = (vnode_t *)fd;
+	vnode_t *vp = (vnode_t *)file->_fd;
+
 	if (fstat64(vp->v_fd, &st) == -1) {
 		vn_close(vp);
 		return (errno);
 	}
-	bst->st_size = (uint64_t)st.st_size;
+	*size = st.st_size;
 	return (0);
 }
 
@@ -756,4 +755,29 @@ void
 kernel_fini(void)
 {
 	spa_fini();
+}
+
+int
+z_uncompress(void *dst, size_t *dstlen, const void *src, size_t srclen)
+{
+	int ret;
+	uLongf len = *dstlen;
+
+	if ((ret = uncompress(dst, &len, src, srclen)) == Z_OK)
+		*dstlen = (size_t)len;
+
+	return (ret);
+}
+
+int
+z_compress_level(void *dst, size_t *dstlen, const void *src, size_t srclen,
+    int level)
+{
+	int ret;
+	uLongf len = *dstlen;
+
+	if ((ret = compress2(dst, &len, src, srclen, level)) == Z_OK)
+		*dstlen = (size_t)len;
+
+	return (ret);
 }

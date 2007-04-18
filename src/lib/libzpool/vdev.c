@@ -57,6 +57,9 @@ static vdev_ops_t *vdev_ops_table[] = {
 	NULL
 };
 
+/* maximum scrub/resilver I/O queue */
+int zfs_scrub_limit = 70;
+
 /*
  * Given a vdev type, return the appropriate ops vector.
  */
@@ -194,6 +197,9 @@ vdev_add_child(vdev_t *pvd, vdev_t *cvd)
 	 */
 	for (; pvd != NULL; pvd = pvd->vdev_parent)
 		pvd->vdev_guid_sum += cvd->vdev_guid_sum;
+
+	if (cvd->vdev_ops->vdev_op_leaf)
+		cvd->vdev_spa->spa_scrub_maxinflight += zfs_scrub_limit;
 }
 
 void
@@ -228,6 +234,9 @@ vdev_remove_child(vdev_t *pvd, vdev_t *cvd)
 	 */
 	for (; pvd != NULL; pvd = pvd->vdev_parent)
 		pvd->vdev_guid_sum -= cvd->vdev_guid_sum;
+
+	if (cvd->vdev_ops->vdev_op_leaf)
+		cvd->vdev_spa->spa_scrub_maxinflight -= zfs_scrub_limit;
 }
 
 /*
@@ -779,7 +788,6 @@ vdev_open(vdev_t *vd)
 	}
 
 	if (vd->vdev_offline) {
-		dprintf("vdev_open(): vd->vdev_offline\n");
 		ASSERT(vd->vdev_children == 0);
 		vdev_set_state(vd, B_TRUE, VDEV_STATE_OFFLINE, VDEV_AUX_NONE);
 		return (ENXIO);

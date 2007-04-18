@@ -20,7 +20,7 @@
  */
 
 /*
- * Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -124,9 +124,6 @@ changelist_prefix(prop_changelist_t *clp)
 				 * need to unshare and reshare the volume.
 				 */
 				(void) zfs_unshare_iscsi(cn->cn_handle);
-				break;
-
-			default:
 				break;
 			}
 		} else if (zfs_unmount(cn->cn_handle, NULL, clp->cl_flags) != 0)
@@ -233,18 +230,15 @@ changelist_postfix(prop_changelist_t *clp)
  * Is this "dataset" a child of "parent"?
  */
 static boolean_t
-isa_child_of(char *dataset, const char *parent)
+isa_child_of(const char *dataset, const char *parent)
 {
 	int len;
-
-	/* snapshot does not have a child */
-	if (strchr(parent, '@'))
-		return (B_FALSE);
 
 	len = strlen(parent);
 
 	if (strncmp(dataset, parent, len) == 0 &&
-	    (dataset[len] == '/' || dataset[len] == '\0'))
+	    (dataset[len] == '@' || dataset[len] == '/' ||
+	    dataset[len] == '\0'))
 		return (B_TRUE);
 	else
 		return (B_FALSE);

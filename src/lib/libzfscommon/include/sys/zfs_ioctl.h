@@ -19,7 +19,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -44,37 +44,6 @@ extern "C" {
 
 #define	DMU_BACKUP_VERSION (1ULL)
 #define	DMU_BACKUP_MAGIC 0x2F5bacbacULL
-
-/*
- * zfs-fuse socket messages
- */
-typedef struct {
-	enum {
-		IOCTL_REQ, IOCTL_ANS, COPYIN_REQ, COPYOUT_REQ, MOUNT_REQ, GETF_REQ
-	} cmd_type;
-	union {
-		struct ioctl_req {
-			int32_t cmd;
-			uint64_t arg;
-		} ioctl_req;
-
-		int32_t ioctl_ans_ret;
-
-		struct copy_req {
-			uint64_t ptr;
-			uint64_t size;
-		} copy_req;
-
-		struct mount_req {
-			uint32_t speclen;
-			uint32_t dirlen;
-			int32_t mflag;
-			int32_t optlen;
-		} mount_req;
-
-		int32_t getf_req_fd;
-	} cmd_u;
-} zfsfuse_cmd_t;
 
 /*
  * zfs ioctl command structure
@@ -148,7 +117,7 @@ typedef struct zinject_record {
 
 typedef struct zfs_cmd {
 	char		zc_name[MAXPATHLEN];
-	char		zc_value[MAXPATHLEN];
+	char		zc_value[MAXPATHLEN * 2];
 	uint64_t	zc_guid;
 	uint64_t	zc_nvlist_src;	/* really (char *) */
 	uint64_t	zc_nvlist_src_size;
@@ -161,10 +130,10 @@ typedef struct zfs_cmd {
 	uint64_t	zc_history;	/* really (char *) */
 	uint64_t	zc_history_len;
 	uint64_t	zc_history_offset;
+	uint64_t	zc_obj;
 	dmu_objset_stats_t zc_objset_stats;
 	struct drr_begin zc_begin_record;
 	zinject_record_t zc_inject_record;
-	zbookmark_t	zc_bookmark;
 } zfs_cmd_t;
 
 typedef struct zfs_create_data {

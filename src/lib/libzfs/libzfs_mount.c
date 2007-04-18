@@ -82,8 +82,7 @@ static int (*iscsitgt_zfs_share)(const char *);
 static int (*iscsitgt_zfs_unshare)(const char *);
 static int (*iscsitgt_zfs_is_shared)(const char *);
 
-static void
-zfs_iscsi_init(void) __attribute__((constructor));
+#pragma init(zfs_iscsi_init)
 static void
 zfs_iscsi_init(void)
 {
@@ -163,7 +162,7 @@ dir_is_empty(const char *dirname)
  * 0.
  */
 boolean_t
-zfs_is_mounted(zfs_handle_t *zhp, char **where)
+is_mounted(libzfs_handle_t *zfs_hdl, const char *special, char **where)
 {
 	struct mnttab search = { 0 }, entry;
 
@@ -172,17 +171,23 @@ zfs_is_mounted(zfs_handle_t *zhp, char **where)
 	 * mountpoint, as we can just search for the special device.  This will
 	 * also let us find mounts when the mountpoint is 'legacy'.
 	 */
-	search.mnt_special = (char *)zfs_get_name(zhp);
+	search.mnt_special = (char *)special;
 	search.mnt_fstype = MNTTYPE_ZFS;
 
-	rewind(zhp->zfs_hdl->libzfs_mnttab);
-	if (getmntany(zhp->zfs_hdl->libzfs_mnttab, &entry, &search) != 0)
+	rewind(zfs_hdl->libzfs_mnttab);
+	if (getmntany(zfs_hdl->libzfs_mnttab, &entry, &search) != 0)
 		return (B_FALSE);
 
 	if (where != NULL)
-		*where = zfs_strdup(zhp->zfs_hdl, entry.mnt_mountp);
+		*where = zfs_strdup(zfs_hdl, entry.mnt_mountp);
 
 	return (B_TRUE);
+}
+
+boolean_t
+zfs_is_mounted(zfs_handle_t *zhp, char **where)
+{
+	return (is_mounted(zhp->zfs_hdl, zfs_get_name(zhp), where));
 }
 
 /*
@@ -265,9 +270,8 @@ zfs_mount(zfs_handle_t *zhp, const char *options, int flags)
 	}
 
 	/* perform the mount */
-	/* ZFSFUSE */
-	if (zfsfuse_mount(hdl, zfs_get_name(zhp), mountpoint, MS_OPTIONSTR | flags,
-	    MNTTYPE_ZFS, NULL, 0, mntopts, strlen (mntopts)) != 0) {
+	if (mount(zfs_get_name(zhp), mountpoint, MS_OPTIONSTR | flags,
+	    MNTTYPE_ZFS, NULL, 0, mntopts, sizeof (mntopts)) != 0) {
 		/*
 		 * Generic errors are nasty, but there are just way too many
 		 * from mount(), and they're well-understood.  We pick a few
@@ -293,33 +297,14 @@ zfs_mount(zfs_handle_t *zhp, const char *options, int flags)
 static int
 unmount_one(libzfs_handle_t *hdl, const char *mountpoint, int flags)
 {
-	ASSERT((flags & ~MS_FORCE) == 0);
-
-	char *cmd;
-	int res_print;
-
-	if(flags & MS_FORCE)
-		res_print = asprintf(&cmd, "umount -l %s", mountpoint);
-	else
-		res_print = asprintf(&cmd, "umount %s", mountpoint);
-
-	if(res_print == -1) {
-		zfs_error_aux(hdl, strerror(ENOMEM));
-		goto error;
-	}
-
-	int ret = system(cmd);
-	free(cmd);
-	if (ret != 0) {
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "umount failed"));
-		goto error;
+	if (umount2(mountpoint, flags) != 0) {
+		zfs_error_aux(hdl, strerror(errno));
+		return (zfs_error_fmt(hdl, EZFS_UMOUNTFAILED,
+		    dgettext(TEXT_DOMAIN, "cannot unmount '%s'"),
+		    mountpoint));
 	}
 
 	return (0);
-error:
-	return (zfs_error_fmt(hdl, EZFS_UMOUNTFAILED,
-	    dgettext(TEXT_DOMAIN, "cannot unmount '%s'"),
-	    mountpoint));
 }
 
 /*
@@ -431,8 +416,8 @@ zfs_share_nfs(zfs_handle_t *zhp)
 {
 	char mountpoint[ZFS_MAXPROPLEN];
 	char shareopts[ZFS_MAXPROPLEN];
-	/*char buf[MAXPATHLEN];*/
-	/*FILE *fp;*/
+	char buf[MAXPATHLEN];
+	FILE *fp;
 	libzfs_handle_t *hdl = zhp->zfs_hdl;
 
 	if (!zfs_is_mountable(zhp, mountpoint, sizeof (mountpoint), NULL))
@@ -446,13 +431,6 @@ zfs_share_nfs(zfs_handle_t *zhp)
 	    strcmp(shareopts, "off") == 0)
 		return (0);
 
-	/* ZFSFUSE: not implemented */
-	zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "feature not implemented yet"));
-	return zfs_error_fmt(hdl, EZFS_SHARENFSFAILED,
-	                 dgettext(TEXT_DOMAIN, "cannot share '%s'"),
-	                 zfs_get_name(zhp));
-
-#if 0
 	/*
 	 * If the 'zoned' property is set, then zfs_is_mountable() will have
 	 * already bailed out if we are in the global zone.  But local
@@ -503,7 +481,6 @@ zfs_share_nfs(zfs_handle_t *zhp)
 	verify(pclose(fp) == 0);
 
 	return (0);
-#endif
 }
 
 /*
@@ -638,17 +615,10 @@ zfs_is_shared_iscsi(zfs_handle_t *zhp)
 int
 zfs_share_iscsi(zfs_handle_t *zhp)
 {
-	/*char shareopts[ZFS_MAXPROPLEN];*/
+	char shareopts[ZFS_MAXPROPLEN];
 	const char *dataset = zhp->zfs_name;
 	libzfs_handle_t *hdl = zhp->zfs_hdl;
 
-	/* ZFSFUSE: not implemented */
-	zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "feature not implemented yet"));
-	return zfs_error_fmt(hdl, EZFS_SHAREISCSIFAILED,
-	                 dgettext(TEXT_DOMAIN, "cannot share '%s'"),
-	                 dataset);
-
-#if 0
 	/*
 	 * Return success if there are no share options.
 	 */
@@ -662,7 +632,6 @@ zfs_share_iscsi(zfs_handle_t *zhp)
 		    dgettext(TEXT_DOMAIN, "cannot share '%s'"), dataset));
 
 	return (0);
-#endif
 }
 
 int

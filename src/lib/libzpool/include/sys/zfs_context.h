@@ -19,7 +19,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -71,6 +71,7 @@ extern "C" {
 #include <sys/uio.h>
 #include <sys/zfs_debug.h>
 #include <sys/sdt.h>
+#include <sys/kstat.h>
 
 /*
  * Debugging
@@ -92,22 +93,27 @@ extern "C" {
 
 #ifdef ZFS_DEBUG
 extern void dprintf_setup(int *argc, char **argv);
-#else
-#define dprintf_setup(a,b) ((void) 0)
 #endif /* ZFS_DEBUG */
 
 extern void cmn_err(int, const char *, ...);
+extern void vcmn_err(int, const char *, __va_list);
 extern void panic(const char *, ...);
 extern void vpanic(const char *, __va_list);
 
-#define ASSERT_FAIL(EX) \
-        do { \
-        	fprintf(stderr, __FILE__ ":%i: %s: Assertion `" #EX "` failed.\n", __LINE__, __PRETTY_FUNCTION__); \
-        	abort(); \
-        } while(0)
+/* This definition is copied from assert.h. */
+#if defined(__STDC__)
+#if __STDC_VERSION__ - 0 >= 199901L
+#define	verify(EX) (void)((EX) || \
+	(__assert_c99(#EX, __FILE__, __LINE__, __func__), 0))
+#else
+#define	verify(EX) (void)((EX) || (__assert(#EX, __FILE__, __LINE__), 0))
+#endif /* __STDC_VERSION__ - 0 >= 199901L */
+#else
+#define	verify(EX) (void)((EX) || (_assert("EX", __FILE__, __LINE__), 0))
+#endif	/* __STDC__ */
 
-#define VERIFY(EX) do { if(!(EX)) ASSERT_FAIL(EX); } while(0)
 
+#define	VERIFY	verify
 #define	ASSERT	assert
 
 extern void __assert(const char *, const char *, int);
@@ -152,23 +158,23 @@ _NOTE(CONSTCOND) } while (0)
 
 #ifdef DTRACE_PROBE1
 #undef	DTRACE_PROBE1
-#endif	/* DTRACE_PROBE1 */
 #define	DTRACE_PROBE1(a, b, c)	((void)0)
+#endif	/* DTRACE_PROBE1 */
 
 #ifdef DTRACE_PROBE2
 #undef	DTRACE_PROBE2
-#endif	/* DTRACE_PROBE2 */
 #define	DTRACE_PROBE2(a, b, c, d, e)	((void)0)
+#endif	/* DTRACE_PROBE2 */
 
 #ifdef DTRACE_PROBE3
 #undef	DTRACE_PROBE3
-#endif	/* DTRACE_PROBE3 */
 #define	DTRACE_PROBE3(a, b, c, d, e, f, g)	((void)0)
+#endif	/* DTRACE_PROBE3 */
 
 #ifdef DTRACE_PROBE4
 #undef	DTRACE_PROBE4
-#endif	/* DTRACE_PROBE4 */
 #define	DTRACE_PROBE4(a, b, c, d, e, f, g, h, i)	((void)0)
+#endif	/* DTRACE_PROBE4 */
 
 /*
  * Threads
@@ -196,7 +202,14 @@ typedef struct kmutex {
 
 #define	MUTEX_DEFAULT	USYNC_THREAD
 #undef MUTEX_HELD
-#define	MUTEX_HELD(m) ((m)->m_owner == curthread)
+#define	MUTEX_HELD(m) _mutex_held(&(m)->m_lock)
+
+/*
+ * Argh -- we have to get cheesy here because the kernel and userland
+ * have different signatures for the same routine.
+ */
+extern int _mutex_init(mutex_t *mp, int type, void *arg);
+extern int _mutex_destroy(mutex_t *mp);
 
 #define	mutex_init(mp, b, c, d)		zmutex_init((kmutex_t *)(mp))
 #define	mutex_destroy(mp)		zmutex_destroy((kmutex_t *)(mp))
@@ -212,22 +225,21 @@ extern void *mutex_owner(kmutex_t *mp);
  * RW locks
  */
 typedef struct krwlock {
-	kmutex_t   mutex;
-	int        thr_count;
-	void       *rw_owner;
-	rwlock_t   rw_lock;
+	void		*rw_owner;
+	rwlock_t	rw_lock;
 } krwlock_t;
 
 typedef int krw_t;
 
 #define	RW_READER	0
 #define	RW_WRITER	1
-#define	RW_DEFAULT	0
+#define	RW_DEFAULT	USYNC_THREAD
 
 #undef RW_READ_HELD
+#define	RW_READ_HELD(x)		_rw_read_held(&(x)->rw_lock)
 
-#define RW_WRITE_HELD(x) ((x)->rw_owner == curthread)
-#define RW_LOCK_HELD(x) rw_lock_held(x)
+#undef RW_WRITE_HELD
+#define	RW_WRITE_HELD(x)	_rw_write_held(&(x)->rw_lock)
 
 extern void rw_init(krwlock_t *rwlp, char *name, int type, void *arg);
 extern void rw_destroy(krwlock_t *rwlp);
@@ -235,7 +247,6 @@ extern void rw_enter(krwlock_t *rwlp, krw_t rw);
 extern int rw_tryenter(krwlock_t *rwlp, krw_t rw);
 extern int rw_tryupgrade(krwlock_t *rwlp);
 extern void rw_exit(krwlock_t *rwlp);
-extern int rw_lock_held(krwlock_t *rwlp);
 #define	rw_downgrade(rwlp) do { } while (0)
 
 /*
@@ -243,7 +254,7 @@ extern int rw_lock_held(krwlock_t *rwlp);
  */
 typedef cond_t kcondvar_t;
 
-#define	CV_DEFAULT	0
+#define	CV_DEFAULT	USYNC_THREAD
 
 extern void cv_init(kcondvar_t *cv, char *name, int type, void *arg);
 extern void cv_destroy(kcondvar_t *cv);
@@ -251,6 +262,14 @@ extern void cv_wait(kcondvar_t *cv, kmutex_t *mp);
 extern clock_t cv_timedwait(kcondvar_t *cv, kmutex_t *mp, clock_t abstime);
 extern void cv_signal(kcondvar_t *cv);
 extern void cv_broadcast(kcondvar_t *cv);
+
+/*
+ * kstat creation, installation and deletion
+ */
+extern kstat_t *kstat_create(char *, int,
+    char *, char *, uchar_t, ulong_t, uchar_t);
+extern void kstat_install(kstat_t *);
+extern void kstat_delete(kstat_t *);
 
 /*
  * Kernel memory
@@ -290,7 +309,7 @@ extern taskq_t	*taskq_create(const char *, int, pri_t, int, int, uint_t);
 extern taskqid_t taskq_dispatch(taskq_t *, task_func_t, void *, uint_t);
 extern void	taskq_destroy(taskq_t *);
 extern void	taskq_wait(taskq_t *);
-extern int	taskq_member(taskq_t *, kthread_t *);
+extern int	taskq_member(taskq_t *, void *);
 
 /*
  * vnodes
@@ -424,8 +443,6 @@ extern struct _buf *kobj_open_file(char *name);
 extern int kobj_read_file(struct _buf *file, char *buf, unsigned size,
     unsigned off);
 extern void kobj_close_file(struct _buf *file);
-extern int kobj_fstat(intptr_t, struct bootstat *);
-
-#define PAGESIZE sysconf(_SC_PAGE_SIZE)
+extern int kobj_get_filesize(struct _buf *file, uint64_t *size);
 
 #endif	/* _SYS_ZFS_CONTEXT_H */
