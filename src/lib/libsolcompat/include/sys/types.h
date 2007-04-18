@@ -32,6 +32,7 @@
 #include_next <sys/types.h>
 #include <inttypes.h>
 #include <sys/param.h> /* for NBBY */
+#include <sys/types32.h>
 
 typedef enum boolean { B_FALSE, B_TRUE } boolean_t;
 

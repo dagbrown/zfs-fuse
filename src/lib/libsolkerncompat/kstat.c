@@ -19,24 +19,25 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
- * Copyright 2006 Ricardo Correia.
+ * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
-#ifndef _SYS_KOBJ_H
-#define _SYS_KOBJ_H
+#include <sys/kstat.h>
 
-#include <sys/sdt.h>
-#include <sys/bootstat.h>
+/*ARGSUSED*/
+kstat_t *kstat_create(const char *module, int instance, const char *name, const char *class,
+    uchar_t type, uint_t ndata, uchar_t ks_flag)
+{
+	return (NULL);
+}
 
-struct _buf {
-	intptr_t _fd;
-};
+/*ARGSUSED*/
+void
+kstat_install(kstat_t *ksp)
+{}
 
-extern struct _buf *kobj_open_file(char *name);
-extern int kobj_read_file(struct _buf *file, char *buf, unsigned size, unsigned off);
-extern void kobj_close_file(struct _buf *file);
-extern int kobj_get_filesize(struct _buf *file, uint64_t *size);
-
-#endif
+/*ARGSUSED*/
+void
+kstat_delete(kstat_t *ksp)
+{}

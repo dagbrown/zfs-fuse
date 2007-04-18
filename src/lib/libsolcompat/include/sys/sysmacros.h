@@ -29,6 +29,8 @@
 
 #include_next <sys/sysmacros.h>
 
+#define makedevice(maj,min) makedev(maj,min)
+
 /*
  * Compatibility macros/typedefs needed for Solaris -> Linux port
  */

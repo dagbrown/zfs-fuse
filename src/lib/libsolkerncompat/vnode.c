@@ -45,6 +45,7 @@
 #include <sys/kmem.h>
 #include <sys/rwstlock.h>
 #include <sys/vfs.h>
+#include <sys/vfs_opreg.h>
 #include <sys/cmn_err.h>
 #include <sys/atomic.h>
 #include <sys/types.h>

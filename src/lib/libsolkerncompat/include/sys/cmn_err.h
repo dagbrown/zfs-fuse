@@ -36,6 +36,7 @@
 #define	CE_IGNORE	4	/* print nothing	*/
 
 extern void cmn_err(int, const char *, ...);
+extern void vcmn_err(int, const char *, __va_list);
 extern void panic(const char *, ...);
 extern void vpanic(const char *, __va_list);
 

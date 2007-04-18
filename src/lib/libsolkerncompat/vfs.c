@@ -27,6 +27,7 @@
 
 #include <sys/debug.h>
 #include <sys/vfs.h>
+#include <sys/vfs_opreg.h>
 #include <sys/vnode.h>
 #include <sys/kmem.h>
 #include <sys/atomic.h>
@@ -160,8 +161,10 @@ fs_build_vector(void *vector, int *unused_ops,
 {
 	int i, num_trans, num_ops, used;
 
-	/* Count the number of translations and the number of supplied */
-	/* operations. */
+	/*
+	 * Count the number of translations and the number of supplied
+	 * operations.
+	 */
 
 	{
 		const fs_operation_trans_def_t *p;
@@ -207,13 +210,15 @@ fs_build_vector(void *vector, int *unused_ops,
 			}
 		}
 
-		/* If the file system is using a "placeholder" for default */
-		/* or error functions, grab the appropriate function out of */
-		/* the translation table.  If the file system didn't supply */
-		/* this operation at all, use the default function. */
+		/*
+		 * If the file system is using a "placeholder" for default
+		 * or error functions, grab the appropriate function out of
+		 * the translation table.  If the file system didn't supply
+		 * this operation at all, use the default function.
+		 */
 
 		if (found) {
-			result = operations[j].func;
+			result = operations[j].func.fs_generic;
 			if (result == fs_default) {
 				result = translation[i].defaultFunc;
 			} else if (result == fs_error) {
@@ -347,4 +352,10 @@ vfs_setfsops(int fstype, const fs_operation_def_t *template, vfsops_t **actual)
 #endif
 
 	return (0);
+}
+
+int vfs_freevfsops_by_type(int t)
+{
+	cmn_err(CE_WARN, "vfs.c: vfs_freevfsops_by_type unimplemented");
+	return 0;
 }
