@@ -2,9 +2,8 @@
  * CDDL HEADER START
  *
  * The contents of this file are subject to the terms of the
- * Common Development and Distribution License, Version 1.0 only
- * (the "License").  You may not use this file except in compliance
- * with the License.
+ * Common Development and Distribution License (the "License").
+ * You may not use this file except in compliance with the License.
  *
  * You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
  * or http://www.opensolaris.org/os/licensing.
@@ -20,14 +19,13 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2005 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
 
 
 #include <sys/zfs_context.h>
-#include <pthread.h>
 
 int taskq_now;
 
@@ -45,7 +43,7 @@ struct taskq {
 	krwlock_t	tq_threadlock;
 	kcondvar_t	tq_dispatch_cv;
 	kcondvar_t	tq_wait_cv;
-	pthread_t	*tq_threadlist;
+	thread_t	*tq_threadlist;
 	int		tq_flags;
 	int		tq_active;
 	int		tq_nthreads;
@@ -178,6 +176,9 @@ taskq_create(const char *name, int nthreads, pri_t pri,
 	int t;
 
 	rw_init(&tq->tq_threadlock, NULL, RW_DEFAULT, NULL);
+	mutex_init(&tq->tq_lock, NULL, MUTEX_DEFAULT, NULL);
+	cv_init(&tq->tq_dispatch_cv, NULL, CV_DEFAULT, NULL);
+	cv_init(&tq->tq_wait_cv, NULL, CV_DEFAULT, NULL);
 	tq->tq_flags = flags | TASKQ_ACTIVE;
 	tq->tq_active = nthreads;
 	tq->tq_nthreads = nthreads;
@@ -185,7 +186,7 @@ taskq_create(const char *name, int nthreads, pri_t pri,
 	tq->tq_maxalloc = maxalloc;
 	tq->tq_task.task_next = &tq->tq_task;
 	tq->tq_task.task_prev = &tq->tq_task;
-	tq->tq_threadlist = kmem_alloc(nthreads * sizeof (pthread_t), KM_SLEEP);
+	tq->tq_threadlist = kmem_alloc(nthreads * sizeof (thread_t), KM_SLEEP);
 
 	if (flags & TASKQ_PREPOPULATE) {
 		mutex_enter(&tq->tq_lock);
@@ -195,7 +196,8 @@ taskq_create(const char *name, int nthreads, pri_t pri,
 	}
 
 	for (t = 0; t < nthreads; t++)
-		pthread_create(&tq->tq_threadlist[t], NULL, taskq_thread, tq);
+		(void) thr_create(0, 0, taskq_thread,
+		    tq, THR_BOUND, &tq->tq_threadlist[t]);
 
 	return (tq);
 }
@@ -225,17 +227,20 @@ taskq_destroy(taskq_t *tq)
 	mutex_exit(&tq->tq_lock);
 
 	for (t = 0; t < nthreads; t++)
-		(void) pthread_join(tq->tq_threadlist[t], NULL);
+		(void) thr_join(tq->tq_threadlist[t], NULL, NULL);
 
-	kmem_free(tq->tq_threadlist, nthreads * sizeof (pthread_t));
+	kmem_free(tq->tq_threadlist, nthreads * sizeof (thread_t));
 
 	rw_destroy(&tq->tq_threadlock);
+	mutex_destroy(&tq->tq_lock);
+	cv_destroy(&tq->tq_dispatch_cv);
+	cv_destroy(&tq->tq_wait_cv);
 
 	kmem_free(tq, sizeof (taskq_t));
 }
 
 int
-taskq_member(taskq_t *tq, kthread_t *t)
+taskq_member(taskq_t *tq, void *t)
 {
 	int i;
 
@@ -243,7 +248,7 @@ taskq_member(taskq_t *tq, kthread_t *t)
 		return (1);
 
 	for (i = 0; i < tq->tq_nthreads; i++)
-		if (tq->tq_threadlist[i] == (pthread_t)(uintptr_t)t)
+		if (tq->tq_threadlist[i] == (thread_t)(uintptr_t)t)
 			return (1);
 
 	return (0);

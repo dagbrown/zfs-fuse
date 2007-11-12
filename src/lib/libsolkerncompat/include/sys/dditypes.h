@@ -20,7 +20,7 @@
  */
 
 /*
- * Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -30,6 +30,9 @@
 
 
 #include <sys/isa_defs.h>
+#ifndef	_ASM
+#include <sys/types.h>
+#endif
 
 #ifdef	__cplusplus
 extern "C" {
@@ -259,7 +262,6 @@ typedef struct ddi_device_acc_attr {
 
 typedef struct __ddi_acc_handle *ddi_acc_handle_t;
 
-#if 0
 typedef struct ddi_acc_hdl {
 	int	ah_vers;		/* version number */
 	void	*ah_bus_private;	/* bus private pointer */
@@ -277,7 +279,6 @@ typedef struct ddi_acc_hdl {
 	ulong_t	ah_xfermodes;		/* data transfer modes, etc */
 	ddi_device_acc_attr_t ah_acc;	/* device access attributes */
 } ddi_acc_hdl_t;
-#endif
 
 /*
  * Used by DDI_CTLOPS_POKE and DDI_CTLOPS_PEEK for peek/poke and cautious acc
@@ -290,6 +291,11 @@ typedef struct {
 	size_t			repcount;
 	uint_t			flags;
 } peekpoke_ctlops_t;
+
+/*
+ * Used by the high resolution timeout functions
+ */
+typedef struct __ddi_periodic *ddi_periodic_t;
 
 #endif	/* !_ASM */
 
