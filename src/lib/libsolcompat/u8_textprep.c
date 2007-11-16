@@ -24,27 +24,30 @@
  * Use is subject to license terms.
  */
 
-#ifndef _SOL_SUNDDI_H
-#define _SOL_SUNDDI_H
-
-#ifdef _KERNEL
-
+#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 
 #include <sys/u8_textprep.h>
 
-static inline int
-ddi_strtoul(const char *hw_serial, char **nptr, int base, unsigned long *result)
+size_t u8_textprep_str(char *i, size_t *il, char *o, size_t *ol, int nf, size_t vers, int *err)
 {
-	char *end;
-
-	*result = strtoul(hw_serial, &end, base);
-	if (*result == 0)
-		return (errno);
-	return (0);
+	*err = EINVAL;
+	return ((size_t)-1);
 }
-#endif
 
-#endif
+int
+u8_strcmp(const char *s1, const char *s2, size_t n, int flag, size_t uv,
+                int *error)
+{
+	if (uv > U8_UNICODE_LATEST) {
+		*error = ERANGE;
+		uv = U8_UNICODE_LATEST;
+	} else
+		*error = 0;
 
+	if(flag != 0 && flag != U8_STRCMP_CS)
+		abort();
+
+	return n == 0 ? strcmp(s1, s2) : strncmp(s1, s2, n);
+}
