@@ -79,9 +79,8 @@
 
 #include "zpool_util.h"
 
-/* ZFSFUSE */
-#define	DISK_ROOT	"/dev"
-#define	RDISK_ROOT	"/dev"
+#define	DISK_ROOT	"/dev/dsk"
+#define	RDISK_ROOT	"/dev/rdsk"
 #define	BACKUP_SLICE	"s2"
 
 /*
@@ -114,14 +113,12 @@ vdev_error(const char *fmt, ...)
 	va_end(ap);
 }
 
-/* zfs-fuse: libdiskmgt not ported */
-#if 0
 static void
 libdiskmgt_error(int error)
 {
 	/*
 	 * ENXIO/ENODEV is a valid error message if the device doesn't live in
-	 * /dev.  Don't bother printing an error message in this case.
+	 * /dev/dsk.  Don't bother printing an error message in this case.
 	 */
 	if (error == ENXIO || error == ENODEV)
 		return;
@@ -277,7 +274,7 @@ check_device(const char *path, boolean_t force, boolean_t isspare)
 
 	return (check_slice(path, force, B_FALSE, isspare));
 }
-#endif
+
 /*
  * Check that a file is valid.  All we can do in this case is check that it's
  * not in use by another pool, and not in use by swap.
@@ -292,8 +289,6 @@ check_file(const char *file, boolean_t force, boolean_t isspare)
 	pool_state_t state;
 	boolean_t inuse;
 
-/* ZFS-FUSE: not implemented */
-#if 0
 	if (dm_inuse_swap(file, &err)) {
 		if (err)
 			libdiskmgt_error(err);
@@ -302,7 +297,6 @@ check_file(const char *file, boolean_t force, boolean_t isspare)
 			    "Please see swap(1M).\n"), file);
 		return (-1);
 	}
-#endif
 
 	if ((fd = open(file, O_RDONLY)) < 0)
 		return (0);
@@ -368,8 +362,6 @@ check_file(const char *file, boolean_t force, boolean_t isspare)
 static boolean_t
 is_whole_disk(const char *arg)
 {
-	return B_FALSE;
-#if 0
 	struct dk_gpt *label;
 	int	fd;
 	char	path[MAXPATHLEN];
@@ -385,7 +377,6 @@ is_whole_disk(const char *arg)
 	efi_free(label);
 	(void) close(fd);
 	return (B_TRUE);
-#endif
 }
 
 /*
@@ -393,9 +384,9 @@ is_whole_disk(const char *arg)
  * device, fill in the device id to make a complete nvlist.  Valid forms for a
  * leaf vdev are:
  *
- * 	/dev/xxx	Complete disk path
+ * 	/dev/dsk/xxx	Complete disk path
  * 	/xxx		Full path to file
- * 	xxx		Shorthand for /dev/xxx
+ * 	xxx		Shorthand for /dev/dsk/xxx
  */
 static nvlist_t *
 make_leaf_vdev(const char *arg, uint64_t is_log)
@@ -429,7 +420,7 @@ make_leaf_vdev(const char *arg, uint64_t is_log)
 		/*
 		 * This may be a short path for a device, or it could be total
 		 * gibberish.  Check to see if it's a known device in
-		 * /dev/.  As part of this check, see if we've been given a
+		 * /dev/dsk/.  As part of this check, see if we've been given a
 		 * an entire disk (minus the slice number).
 		 */
 		(void) snprintf(path, sizeof (path), "%s/%s", DISK_ROOT,
@@ -895,13 +886,15 @@ check_replication(nvlist_t *config, nvlist_t *newroot)
 static int
 make_disks(zpool_handle_t *zhp, nvlist_t *nv)
 {
-	/* ZFS-FUSE: not implemented */
-#if 0
 	nvlist_t **child;
 	uint_t c, children;
-	char *type, *path;
+	char *type, *path, *diskname;
+	char buf[MAXPATHLEN];
 	uint64_t wholedisk;
+	int fd;
 	int ret;
+	ddi_devid_t devid;
+	char *minor = NULL, *devid_str = NULL;
 
 	verify(nvlist_lookup_string(nv, ZPOOL_CONFIG_TYPE, &type) == 0);
 
@@ -974,7 +967,12 @@ make_disks(zpool_handle_t *zhp, nvlist_t *nv)
 		for (c = 0; c < children; c++)
 			if ((ret = make_disks(zhp, child[c])) != 0)
 				return (ret);
-#endif
+
+	if (nvlist_lookup_nvlist_array(nv, ZPOOL_CONFIG_L2CACHE,
+	    &child, &children) == 0)
+		for (c = 0; c < children; c++)
+			if ((ret = make_disks(zhp, child[c])) != 0)
+				return (ret);
 
 	return (0);
 }
@@ -982,8 +980,6 @@ make_disks(zpool_handle_t *zhp, nvlist_t *nv)
 /*
  * Determine if the given path is a hot spare within the given configuration.
  */
-/* zfs-fuse: this function is only used inside check_in_use() */
-#if 0
 static boolean_t
 is_spare(nvlist_t *config, const char *path)
 {
@@ -1028,7 +1024,6 @@ is_spare(nvlist_t *config, const char *path)
 
 	return (B_FALSE);
 }
-#endif
 
 /*
  * Go through and find any devices that are in use.  We rely on libdiskmgt for
@@ -1038,8 +1033,6 @@ static int
 check_in_use(nvlist_t *config, nvlist_t *nv, int force, int isreplacing,
     int isspare)
 {
-/* zfs-fuse: TODO */
-#if 0
 	nvlist_t **child;
 	uint_t c, children;
 	char *type, *path;
@@ -1090,7 +1083,14 @@ check_in_use(nvlist_t *config, nvlist_t *nv, int force, int isreplacing,
 			if ((ret = check_in_use(config, child[c], force,
 			    isreplacing, B_TRUE)) != 0)
 				return (ret);
-#endif
+
+	if (nvlist_lookup_nvlist_array(nv, ZPOOL_CONFIG_L2CACHE,
+	    &child, &children) == 0)
+		for (c = 0; c < children; c++)
+			if ((ret = check_in_use(config, child[c], force,
+			    isreplacing, B_FALSE)) != 0)
+				return (ret);
+
 	return (0);
 }
 
@@ -1127,6 +1127,12 @@ is_grouping(const char *type, int *mindev)
 		return (VDEV_TYPE_LOG);
 	}
 
+	if (strcmp(type, "cache") == 0) {
+		if (mindev != NULL)
+			*mindev = 1;
+		return (VDEV_TYPE_L2CACHE);
+	}
+
 	return (NULL);
 }
 
@@ -1139,8 +1145,8 @@ is_grouping(const char *type, int *mindev)
 nvlist_t *
 construct_spec(int argc, char **argv)
 {
-	nvlist_t *nvroot, *nv, **top, **spares;
-	int t, toplevels, mindev, nspares, nlogs;
+	nvlist_t *nvroot, *nv, **top, **spares, **l2cache;
+	int t, toplevels, mindev, nspares, nlogs, nl2cache;
 	const char *type;
 	uint64_t is_log;
 	boolean_t seen_logs;
@@ -1148,8 +1154,10 @@ construct_spec(int argc, char **argv)
 	top = NULL;
 	toplevels = 0;
 	spares = NULL;
+	l2cache = NULL;
 	nspares = 0;
 	nlogs = 0;
+	nl2cache = 0;
 	is_log = B_FALSE;
 	seen_logs = B_FALSE;
 
@@ -1194,6 +1202,17 @@ construct_spec(int argc, char **argv)
 				continue;
 			}
 
+			if (strcmp(type, VDEV_TYPE_L2CACHE) == 0) {
+				if (l2cache != NULL) {
+					(void) fprintf(stderr,
+					    gettext("invalid vdev "
+					    "specification: 'cache' can be "
+					    "specified only once\n"));
+					return (NULL);
+				}
+				is_log = B_FALSE;
+			}
+
 			if (is_log) {
 				if (strcmp(type, VDEV_TYPE_MIRROR) != 0) {
 					(void) fprintf(stderr,
@@ -1232,6 +1251,10 @@ construct_spec(int argc, char **argv)
 			if (strcmp(type, VDEV_TYPE_SPARE) == 0) {
 				spares = child;
 				nspares = children;
+				continue;
+			} else if (strcmp(type, VDEV_TYPE_L2CACHE) == 0) {
+				l2cache = child;
+				nl2cache = children;
 				continue;
 			} else {
 				verify(nvlist_alloc(&nv, NV_UNIQUE_NAME,
@@ -1273,7 +1296,7 @@ construct_spec(int argc, char **argv)
 		top[toplevels - 1] = nv;
 	}
 
-	if (toplevels == 0 && nspares == 0) {
+	if (toplevels == 0 && nspares == 0 && nl2cache == 0) {
 		(void) fprintf(stderr, gettext("invalid vdev "
 		    "specification: at least one toplevel vdev must be "
 		    "specified\n"));
@@ -1297,13 +1320,20 @@ construct_spec(int argc, char **argv)
 	if (nspares != 0)
 		verify(nvlist_add_nvlist_array(nvroot, ZPOOL_CONFIG_SPARES,
 		    spares, nspares) == 0);
+	if (nl2cache != 0)
+		verify(nvlist_add_nvlist_array(nvroot, ZPOOL_CONFIG_L2CACHE,
+		    l2cache, nl2cache) == 0);
 
 	for (t = 0; t < toplevels; t++)
 		nvlist_free(top[t]);
 	for (t = 0; t < nspares; t++)
 		nvlist_free(spares[t]);
+	for (t = 0; t < nl2cache; t++)
+		nvlist_free(l2cache[t]);
 	if (spares)
 		free(spares);
+	if (l2cache)
+		free(l2cache);
 	free(top);
 
 	return (nvroot);

@@ -49,7 +49,7 @@
 #include "zfs_prop.h"
 #include "libzfs_impl.h"
 
-#include <sys/zio_checksum.h>
+#include <fletcher.c> /* XXX */
 
 /*
  * Routines for dealing with the AVL tree of fs-nvlists
@@ -1576,7 +1576,7 @@ zfs_receive_one(libzfs_handle_t *hdl, int infd, const char *tosnap,
 			(void) printf("found clone origin %s\n", zc.zc_string);
 	}
 
-	stream_wantsnewfs = (drrb->drr_fromguid == 0 ||
+	stream_wantsnewfs = (drrb->drr_fromguid == NULL ||
 	    (drrb->drr_flags & DRR_FLAG_CLONE));
 
 	if (stream_wantsnewfs) {
@@ -1896,6 +1896,7 @@ zfs_receive(libzfs_handle_t *hdl, const char *tosnap, recvflags_t flags,
 	/* the kernel needs the non-byteswapped begin record */
 	drr_noswap = drr;
 
+	flags.byteswap = B_FALSE;
 	if (drrb->drr_magic == BSWAP_64(DMU_BACKUP_MAGIC)) {
 		/*
 		 * We computed the checksum in the wrong byteorder in

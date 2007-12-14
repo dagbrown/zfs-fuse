@@ -406,7 +406,7 @@ dump_zpldir(objset_t *os, uint64_t object, void *data, size_t size)
 	    zap_cursor_retrieve(&zc, &attr) == 0;
 	    zap_cursor_advance(&zc)) {
 		(void) printf("\t\t%s = %lld (type: %s)\n",
-		    attr.za_name, (longlong_t) ZFS_DIRENT_OBJ(attr.za_first_integer),
+		    attr.za_name, ZFS_DIRENT_OBJ(attr.za_first_integer),
 		    typenames[ZFS_DIRENT_TYPE(attr.za_first_integer)]);
 	}
 	zap_cursor_fini(&zc);
@@ -501,10 +501,8 @@ dump_metaslabs(spa_t *spa)
 	for (c = 0; c < rvd->vdev_children; c++) {
 		vd = rvd->vdev_child[c];
 
-		spa_config_enter(spa, RW_READER, FTAG);
 		(void) printf("\n    vdev %llu = %s\n\n",
 		    (u_longlong_t)vd->vdev_id, vdev_description(vd));
-		spa_config_exit(spa, FTAG);
 
 		if (dump_opt['d'] <= 5) {
 			(void) printf("\t%10s   %10s   %5s\n",
@@ -522,7 +520,6 @@ static void
 dump_dtl(vdev_t *vd, int indent)
 {
 	avl_tree_t *t = &vd->vdev_dtl_map.sm_root;
-	spa_t *spa = vd->vdev_spa;
 	space_seg_t *ss;
 	vdev_t *pvd;
 	int c;
@@ -530,9 +527,7 @@ dump_dtl(vdev_t *vd, int indent)
 	if (indent == 0)
 		(void) printf("\nDirty time logs:\n\n");
 
-	spa_config_enter(spa, RW_READER, FTAG);
 	(void) printf("\t%*s%s\n", indent, "", vdev_description(vd));
-	spa_config_exit(spa, FTAG);
 
 	for (ss = avl_first(t); ss; ss = AVL_NEXT(t, ss)) {
 		/*
@@ -1625,7 +1620,7 @@ dump_block_stats(spa_t *spa)
 		(void) printf("block traversal size %llu != alloc %llu "
 		    "(leaked %lld)\n",
 		    (u_longlong_t)tzb->zb_asize,
-		    (u_longlong_t)(alloc + logalloc),
+		    (u_longlong_t)alloc + logalloc,
 		    (u_longlong_t)(alloc + logalloc - tzb->zb_asize));
 		leaks = 1;
 	}
@@ -1730,6 +1725,8 @@ dump_zpool(spa_t *spa)
 	dsl_pool_t *dp = spa_get_dsl(spa);
 	int rc = 0;
 
+	spa_config_enter(spa, RW_READER, FTAG);
+
 	if (dump_opt['u'])
 		dump_uberblock(&spa->spa_uberblock);
 
@@ -1750,6 +1747,8 @@ dump_zpool(spa_t *spa)
 
 	if (dump_opt['s'])
 		show_pool_stats(spa);
+
+	spa_config_exit(spa, FTAG);
 
 	if (rc != 0)
 		exit(rc);
