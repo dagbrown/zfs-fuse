@@ -44,6 +44,7 @@
 #include <pwd.h>
 #include <zone.h>
 #include <sys/fs/zfs.h>
+#include <zfsfuse.h>
 
 #include <sys/stat.h>
 
@@ -1288,7 +1289,7 @@ do_import(nvlist_t *config, const char *newname, const char *mntopts,
  *	 -c	Read pool information from a cachefile instead of searching
  *		devices.
  *
- *       -d	Scan in a specific directory, other than /dev/dsk.  More than
+ *       -d	Scan in a specific directory, other than /dev.  More than
  *		one directory can be specified using multiple '-d' options.
  *
  *       -D     Scan for previously destroyed pools or import all or only
@@ -1402,7 +1403,7 @@ zpool_do_import(int argc, char **argv)
 
 	if (searchdirs == NULL) {
 		searchdirs = safe_malloc(sizeof (char *));
-		searchdirs[0] = "/dev/dsk";
+		searchdirs[0] = "/dev";
 		nsearch = 1;
 	}
 
@@ -1989,9 +1990,9 @@ print_header(zprop_list_t *pl)
 		if (pl->pl_next == NULL && !right_justify)
 			(void) printf("%s", header);
 		else if (right_justify)
-			(void) printf("%*s", pl->pl_width, header);
+			(void) printf("%*s", (int) pl->pl_width, header);
 		else
-			(void) printf("%-*s", pl->pl_width, header);
+			(void) printf("%-*s", (int) pl->pl_width, header);
 	}
 
 	(void) printf("\n");
@@ -2144,10 +2145,10 @@ zpool_get_vdev_by_name(nvlist_t *nv, char *name)
 	if (nvlist_lookup_nvlist_array(nv, ZPOOL_CONFIG_CHILDREN,
 	    &child, &children) != 0) {
 		verify(nvlist_lookup_string(nv, ZPOOL_CONFIG_PATH, &path) == 0);
-		if (strncmp(name, "/dev/dsk/", 9) == 0)
-			name += 9;
-		if (strncmp(path, "/dev/dsk/", 9) == 0)
-			path += 9;
+		if (strncmp(name, "/dev/", 5) == 0)
+			name += 5;
+		if (strncmp(path, "/dev/", 5) == 0)
+			path += 5;
 		if (strcmp(name, path) == 0)
 			return (nv);
 		return (NULL);
@@ -3044,6 +3045,11 @@ status_callback(zpool_handle_t *zhp, void *data)
 		    "to be recovered.\n"));
 		break;
 
+	case ZPOOL_STATUS_HOSTID_MISMATCH:
+		(void) printf(gettext("status: The pool was last accessed by "
+		    "another system.\n"));
+		break;
+
 	default:
 		/*
 		 * The remaining errors can't actually be generated, yet.
@@ -3259,8 +3265,8 @@ upgrade_one(zpool_handle_t *zhp, void *data)
 	cur_version = zpool_get_prop_int(zhp, ZPOOL_PROP_VERSION, NULL);
 	if (cur_version >= cbp->cb_version) {
 		(void) printf(gettext("Pool '%s' is already formatted "
-		    "using more current version '%d'.\n"), zpool_get_name(zhp),
-		    cur_version);
+		    "using more current version '%llu'.\n"), zpool_get_name(zhp),
+		    (u_longlong_t) cur_version);
 		return (0);
 	}
 
@@ -3513,7 +3519,7 @@ get_history_one(zpool_handle_t *zhp, void *data)
 			(void) snprintf(internalstr,
 			    sizeof (internalstr),
 			    "[internal %s txg:%lld] %s",
-			    hist_event_table[ievent], txg,
+			    hist_event_table[ievent], (longlong_t) txg,
 			    pathstr);
 			cmdstr = internalstr;
 		}
@@ -3807,7 +3813,8 @@ main(int argc, char **argv)
 		 * it as such.
 		 */
 		char buf[16384];
-		int fd = open(ZFS_DEV, O_RDWR);
+		/* zfs-fuse: zfsfuse_open() connects to the UNIX domain socket */
+		int fd = zfsfuse_open(ZFS_DEV_NAME, O_RDWR);
 		(void) strcpy((void *)buf, argv[2]);
 		return (!!ioctl(fd, ZFS_IOC_POOL_FREEZE, buf));
 	} else {
