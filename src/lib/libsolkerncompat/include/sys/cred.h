@@ -51,8 +51,6 @@ typedef struct cred cred_t;
 
 #ifdef _KERNEL
 
-#define	CRED()		curthread->t_cred
-
 struct proc;				/* cred.h is included in proc.h */
 struct prcred;
 struct ksid;
@@ -65,6 +63,8 @@ extern int ngroups_max;
  * kcred is used when you need all privileges.
  */
 extern struct cred *kcred;
+
+#define	CRED()		kcred
 
 extern void cred_init(void);
 extern void crhold(cred_t *);
@@ -162,6 +162,7 @@ extern boolean_t crisremote(const cred_t *);
 extern boolean_t valid_ephemeral_uid(struct zone *, uid_t);
 extern boolean_t valid_ephemeral_gid(struct zone *, gid_t);
 
+#if 0
 extern int eph_uid_alloc(struct zone *, int, uid_t *, int);
 extern int eph_gid_alloc(struct zone *, int, gid_t *, int);
 
@@ -172,6 +173,10 @@ extern struct ksid *crgetsid(const cred_t *, int);
 extern struct ksidlist *crgetsidlist(const cred_t *);
 
 extern int crsetpriv(cred_t *, ...);
+#endif
+
+#define crgetsidlist(c)    (abort(), NULL)
+#define crgetsid(c,i)      (NULL)
 
 #endif	/* _KERNEL */
 

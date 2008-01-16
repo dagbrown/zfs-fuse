@@ -95,7 +95,7 @@ kmem_cache_t *zio_cache;
 kmem_cache_t *zio_buf_cache[SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT];
 kmem_cache_t *zio_data_buf_cache[SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT];
 
-#ifdef _KERNEL
+#if 0
 extern vmem_t *zio_alloc_arena;
 #endif
 
@@ -126,7 +126,7 @@ zio_init(void)
 	size_t c;
 	vmem_t *data_alloc_arena = NULL;
 
-#ifdef _KERNEL
+#if 0
 	data_alloc_arena = zio_alloc_arena;
 #endif
 
@@ -934,7 +934,7 @@ zio_ready(zio_t *zio)
 		zio_notify_parent(zio, ZIO_STAGE_WAIT_FOR_CHILDREN_READY,
 		    &pio->io_children_notready);
 
-	if (zio->io_bp)
+	if (zio->io_bp && zio->io_bp != &zio->io_bp_copy)
 		zio->io_bp_copy = *zio->io_bp;
 
 	return (ZIO_PIPELINE_CONTINUE);
@@ -1182,7 +1182,7 @@ zio_assess(zio_t *zio)
 #endif
 
 			if (spa_get_failmode(spa) == ZIO_FAILURE_MODE_PANIC) {
-				fm_panic("Pool '%s' has encountered an "
+				cmn_err(CE_PANIC, "Pool '%s' has encountered an "
 				    "uncorrectable I/O failure and the "
 				    "failure mode property for this pool "
 				    "is set to panic.", spa_name(spa));
