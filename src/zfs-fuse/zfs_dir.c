@@ -19,7 +19,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -303,7 +303,7 @@ zfs_dirent_lock(zfs_dirlock_t **dlpp, znode_t *dzp, char *name, znode_t **zpp,
 			zfs_dirent_unlock(dl);
 			return (EEXIST);
 		}
-		error = zfs_zget(zfsvfs, zoid, zpp, B_FALSE);
+		error = zfs_zget(zfsvfs, zoid, zpp);
 		if (error) {
 			zfs_dirent_unlock(dl);
 			return (error);
@@ -379,7 +379,7 @@ zfs_dirlook(znode_t *dzp, char *name, vnode_t **vpp, int flags,
 			return (error);
 		}
 		rw_enter(&dzp->z_parent_lock, RW_READER);
-		error = zfs_zget(zfsvfs, dzp->z_phys->zp_parent, &zp, B_FALSE);
+		error = zfs_zget(zfsvfs, dzp->z_phys->zp_parent, &zp);
 		if (error == 0)
 			*vpp = ZTOV(zp);
 		rw_exit(&dzp->z_parent_lock);
@@ -486,7 +486,7 @@ zfs_unlinked_drain(zfsvfs_t *zfsvfs)
 		 * We need to re-mark these list entries for deletion,
 		 * so we pull them back into core and set zp->z_unlinked.
 		 */
-		error = zfs_zget(zfsvfs, zap.za_first_integer, &zp, B_FALSE);
+		error = zfs_zget(zfsvfs, zap.za_first_integer, &zp);
 
 		/*
 		 * We may pick up znodes that are already marked for deletion.
@@ -528,7 +528,7 @@ zfs_purgedir(znode_t *dzp)
 	    (error = zap_cursor_retrieve(&zc, &zap)) == 0;
 	    zap_cursor_advance(&zc)) {
 		error = zfs_zget(zfsvfs,
-		    ZFS_DIRENT_OBJ(zap.za_first_integer), &xzp, B_FALSE);
+		    ZFS_DIRENT_OBJ(zap.za_first_integer), &xzp);
 		ASSERT3U(error, ==, 0);
 
 		ASSERT((ZTOV(xzp)->v_type == VREG) ||
@@ -584,6 +584,8 @@ zfs_rmnode(znode_t *zp)
 			 * Not enough space to delete some xattrs.
 			 * Leave it on the unlinked set.
 			 */
+			zfs_znode_dmu_fini(zp);
+			zfs_znode_free(zp);
 			return;
 		}
 	}
@@ -593,7 +595,7 @@ zfs_rmnode(znode_t *zp)
 	 * the xattr dir.
 	 */
 	if (zp->z_phys->zp_xattr) {
-		error = zfs_zget(zfsvfs, zp->z_phys->zp_xattr, &xzp, B_FALSE);
+		error = zfs_zget(zfsvfs, zp->z_phys->zp_xattr, &xzp);
 		ASSERT(error == 0);
 	}
 
@@ -619,7 +621,9 @@ zfs_rmnode(znode_t *zp)
 		 * which point we'll call zfs_unlinked_drain() to process it).
 		 */
 		dmu_tx_abort(tx);
-		return;
+		zfs_znode_dmu_fini(zp);
+		zfs_znode_free(zp);
+		goto out;
 	}
 
 	if (xzp) {
@@ -639,7 +643,7 @@ zfs_rmnode(znode_t *zp)
 	zfs_znode_delete(zp, tx);
 
 	dmu_tx_commit(tx);
-
+out:
 	if (xzp)
 		VN_RELE(ZTOV(xzp));
 }
@@ -857,7 +861,6 @@ zfs_make_xattrdir(znode_t *zp, vattr_t *vap, vnode_t **xvpp, cred_t *cr)
  *	RETURN:	0 on success
  *		error number on failure
  */
-#if 0
 int
 zfs_get_xattrdir(znode_t *zp, vnode_t **xvpp, cred_t *cr, int flags)
 {
@@ -902,7 +905,7 @@ top:
 	va.va_mask = AT_TYPE | AT_MODE | AT_UID | AT_GID;
 	va.va_type = VDIR;
 	va.va_mode = S_IFDIR | S_ISVTX | 0777;
-	zfs_fuid_map_ids(zp, &va.va_uid, &va.va_gid);
+	zfs_fuid_map_ids(zp, cr, &va.va_uid, &va.va_gid);
 
 	error = zfs_make_xattrdir(zp, &va, xvpp, cr);
 	zfs_dirent_unlock(dl);
@@ -914,7 +917,6 @@ top:
 
 	return (error);
 }
-#endif
 
 /*
  * Decide whether it is okay to remove within a sticky directory.
@@ -943,8 +945,8 @@ zfs_sticky_remove_access(znode_t *zdp, znode_t *zp, cred_t *cr)
 	if ((zdp->z_phys->zp_mode & S_ISVTX) == 0)
 		return (0);
 
-	zfs_fuid_map_id(zfsvfs, zdp->z_phys->zp_uid, ZFS_OWNER, &downer);
-	zfs_fuid_map_id(zfsvfs, zp->z_phys->zp_uid, ZFS_OWNER, &fowner);
+	zfs_fuid_map_id(zfsvfs, zdp->z_phys->zp_uid, cr, ZFS_OWNER, &downer);
+	zfs_fuid_map_id(zfsvfs, zp->z_phys->zp_uid, cr, ZFS_OWNER, &fowner);
 
 	if ((uid = crgetuid(cr)) == downer || uid == fowner ||
 	    (ZTOV(zp)->v_type == VREG &&

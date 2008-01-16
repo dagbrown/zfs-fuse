@@ -20,7 +20,7 @@
  */
 
 /*
- * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -49,7 +49,7 @@
 #include "zfs_prop.h"
 #include "libzfs_impl.h"
 
-#include <sys/zio_checksum.h>
+#include <fletcher.c> /* XXX */
 
 /*
  * Routines for dealing with the AVL tree of fs-nvlists
@@ -426,7 +426,7 @@ dump_ioctl(zfs_handle_t *zhp, const char *fromsnap, boolean_t fromorigin,
 
 	(void) strlcpy(zc.zc_name, zhp->zfs_name, sizeof (zc.zc_name));
 	if (fromsnap)
-		(void) strlcpy(zc.zc_value, fromsnap, sizeof (zc.zc_name));
+		(void) strlcpy(zc.zc_value, fromsnap, sizeof (zc.zc_value));
 	zc.zc_cookie = outfd;
 	zc.zc_obj = fromorigin;
 
@@ -1576,7 +1576,7 @@ zfs_receive_one(libzfs_handle_t *hdl, int infd, const char *tosnap,
 			(void) printf("found clone origin %s\n", zc.zc_string);
 	}
 
-	stream_wantsnewfs = (drrb->drr_fromguid == 0 ||
+	stream_wantsnewfs = (drrb->drr_fromguid == NULL ||
 	    (drrb->drr_flags & DRR_FLAG_CLONE));
 
 	if (stream_wantsnewfs) {

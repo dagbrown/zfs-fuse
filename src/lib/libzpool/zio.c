@@ -95,7 +95,7 @@ kmem_cache_t *zio_cache;
 kmem_cache_t *zio_buf_cache[SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT];
 kmem_cache_t *zio_data_buf_cache[SPA_MAXBLOCKSIZE >> SPA_MINBLOCKSHIFT];
 
-#if 0
+#ifdef _KERNEL
 extern vmem_t *zio_alloc_arena;
 #endif
 
@@ -118,8 +118,7 @@ extern vmem_t *zio_alloc_arena;
  * stage set or will have it later in it's lifetime.
  */
 #define	IO_IS_ALLOCATING(zio) \
-	((zio)->io_orig_pipeline == ZIO_WRITE_PIPELINE ||		\
-	(zio)->io_pipeline & (1U << ZIO_STAGE_DVA_ALLOCATE))
+	((zio)->io_orig_pipeline & (1U << ZIO_STAGE_DVA_ALLOCATE))
 
 void
 zio_init(void)
@@ -127,7 +126,7 @@ zio_init(void)
 	size_t c;
 	vmem_t *data_alloc_arena = NULL;
 
-#if 0
+#ifdef _KERNEL
 	data_alloc_arena = zio_alloc_arena;
 #endif
 
@@ -935,7 +934,7 @@ zio_ready(zio_t *zio)
 		zio_notify_parent(zio, ZIO_STAGE_WAIT_FOR_CHILDREN_READY,
 		    &pio->io_children_notready);
 
-	if (zio->io_bp && zio->io_bp != &zio->io_bp_copy)
+	if (zio->io_bp)
 		zio->io_bp_copy = *zio->io_bp;
 
 	return (ZIO_PIPELINE_CONTINUE);
@@ -1183,7 +1182,7 @@ zio_assess(zio_t *zio)
 #endif
 
 			if (spa_get_failmode(spa) == ZIO_FAILURE_MODE_PANIC) {
-				cmn_err(CE_PANIC, "Pool '%s' has encountered an "
+				fm_panic("Pool '%s' has encountered an "
 				    "uncorrectable I/O failure and the "
 				    "failure mode property for this pool "
 				    "is set to panic.", spa_name(spa));
@@ -1324,7 +1323,6 @@ zio_write_compress(zio_t *zio)
 			BP_SET_LSIZE(bp, lsize);
 			BP_SET_PSIZE(bp, csize);
 			BP_SET_COMPRESS(bp, compress);
-			zio->io_pipeline = ZIO_WRITE_ALLOCATE_PIPELINE;
 		}
 	}
 
@@ -1813,8 +1811,7 @@ zio_vdev_io_assess(zio_t *zio)
 
 		zio->io_retries++;
 		zio->io_error = 0;
-		zio->io_flags &= ZIO_FLAG_VDEV_INHERIT |
-		    ZIO_FLAG_CONFIG_GRABBED;
+		zio->io_flags &= ZIO_FLAG_RETRY_INHERIT;
 		/* XXPOLICY */
 		zio->io_flags &= ~ZIO_FLAG_FAILFAST;
 		zio->io_flags |= ZIO_FLAG_DONT_CACHE;
@@ -2077,24 +2074,9 @@ zio_free_blk(spa_t *spa, blkptr_t *bp, uint64_t txg)
  * start an async flush of the write cache for this vdev
  */
 void
-zio_flush_vdev(spa_t *spa, uint64_t vdev, zio_t **zio)
+zio_flush(zio_t *zio, vdev_t *vd)
 {
-	vdev_t *vd;
-
-	/*
-	 * Lock out configuration changes.
-	 */
-	spa_config_enter(spa, RW_READER, FTAG);
-
-	if (*zio == NULL)
-		*zio = zio_root(spa, NULL, NULL, ZIO_FLAG_CANFAIL);
-
-	vd = vdev_lookup_top(spa, vdev);
-	ASSERT(vd);
-
-	(void) zio_nowait(zio_ioctl(*zio, spa, vd, DKIOCFLUSHWRITECACHE,
+	zio_nowait(zio_ioctl(zio, zio->io_spa, vd, DKIOCFLUSHWRITECACHE,
 	    NULL, NULL, ZIO_PRIORITY_NOW,
 	    ZIO_FLAG_CANFAIL | ZIO_FLAG_DONT_RETRY));
-
-	spa_config_exit(spa, FTAG);
 }

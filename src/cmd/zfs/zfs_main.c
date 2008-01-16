@@ -1376,28 +1376,16 @@ upgrade_set_callback(zfs_handle_t *zhp, void *data)
 	int version = zfs_prop_get_int(zhp, ZFS_PROP_VERSION);
 
 	if (cb->cb_version >= ZPL_VERSION_FUID) {
-		char pool_name[MAXPATHLEN];
-		zpool_handle_t *zpool_handle;
 		int spa_version;
-		char *p;
 
-		if (zfs_prop_get(zhp, ZFS_PROP_NAME, pool_name,
-		    sizeof (pool_name), NULL, NULL, 0, B_FALSE) != 0)
+		if (zfs_spa_version(zhp, &spa_version) < 0)
 			return (-1);
 
-		if (p = strchr(pool_name, '/'))
-			*p = '\0';
-		if ((zpool_handle = zpool_open(g_zfs, pool_name)) == NULL)
-			return (-1);
-
-		spa_version = zpool_get_prop_int(zpool_handle,
-		    ZPOOL_PROP_VERSION, NULL);
-		zpool_close(zpool_handle);
 		if (spa_version < SPA_VERSION_FUID) {
 			/* can't upgrade */
 			(void) printf(gettext("%s: can not be upgraded; "
 			    "the pool version needs to first be upgraded\nto "
-			    "version %llu\n\n"),
+			    "version %d\n\n"),
 			    zfs_get_name(zhp), SPA_VERSION_FUID);
 			cb->cb_numfailed++;
 			return (0);
@@ -1408,7 +1396,7 @@ upgrade_set_callback(zfs_handle_t *zhp, void *data)
 	if (version < cb->cb_version) {
 		char verstr[16];
 		(void) snprintf(verstr, sizeof (verstr),
-		    "%llu", (u_longlong_t) cb->cb_version);
+		    "%llu", cb->cb_version);
 		if (cb->cb_lastfs[0] && !same_pool(zhp, cb->cb_lastfs)) {
 			/*
 			 * If they did "zfs upgrade -a", then we could
@@ -1513,11 +1501,11 @@ zfs_do_upgrade(int argc, char **argv)
 		ret = zfs_for_each(argc, argv, recurse, ZFS_TYPE_FILESYSTEM,
 		    NULL, NULL, upgrade_set_callback, &cb, B_TRUE);
 		(void) printf(gettext("%llu filesystems upgraded\n"),
-		    (u_longlong_t) cb.cb_numupgraded);
+		    cb.cb_numupgraded);
 		if (cb.cb_numsamegraded) {
 			(void) printf(gettext("%llu filesystems already at "
 			    "this version\n"),
-			    (u_longlong_t) cb.cb_numsamegraded);
+			    cb.cb_numsamegraded);
 		}
 		if (cb.cb_numfailed != 0)
 			ret = 1;
@@ -1601,9 +1589,9 @@ print_header(zprop_list_t *pl)
 		if (pl->pl_next == NULL && !right_justify)
 			(void) printf("%s", header);
 		else if (right_justify)
-			(void) printf("%*s", (int) pl->pl_width, header);
+			(void) printf("%*s", pl->pl_width, header);
 		else
-			(void) printf("%-*s", (int) pl->pl_width, header);
+			(void) printf("%-*s", pl->pl_width, header);
 	}
 
 	(void) printf("\n");
@@ -2015,6 +2003,7 @@ zfs_do_rollback(int argc, char **argv)
 {
 	int ret;
 	int c;
+	boolean_t force = B_FALSE;
 	rollback_cbdata_t cb = { 0 };
 	zfs_handle_t *zhp, *snap;
 	char parentname[ZFS_MAXNAMELEN];
@@ -2031,10 +2020,7 @@ zfs_do_rollback(int argc, char **argv)
 			cb.cb_doclones = 1;
 			break;
 		case 'f':
-			/*
-			 * this is accepted and ignored for backwards
-			 * compatability.
-			 */
+			force = B_TRUE;
 			break;
 		case '?':
 			(void) fprintf(stderr, gettext("invalid option '%c'\n"),
@@ -2086,7 +2072,7 @@ zfs_do_rollback(int argc, char **argv)
 	/*
 	 * Rollback parent to the given snapshot.
 	 */
-	ret = zfs_rollback(zhp, snap);
+	ret = zfs_rollback(zhp, snap, force);
 
 out:
 	zfs_close(snap);

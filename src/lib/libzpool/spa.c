@@ -20,7 +20,7 @@
  */
 
 /*
- * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -1071,7 +1071,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 		goto out;
 
 	if (rvd->vdev_state <= VDEV_STATE_CANT_OPEN) {
-		dprintf("spa_load(): rvd->vdev_state <= VDEV_STATE_CANT_OPEN\n");
 		error = ENXIO;
 		goto out;
 	}
@@ -1090,7 +1089,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	 * If we weren't able to find a single valid uberblock, return failure.
 	 */
 	if (ub->ub_txg == 0) {
-		dprintf("spa_load(): can't find single valid uberblock\n");
 		vdev_set_state(rvd, B_TRUE, VDEV_STATE_CANT_OPEN,
 		    VDEV_AUX_CORRUPT_DATA);
 		error = ENXIO;
@@ -1112,7 +1110,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	 * incomplete configuration.
 	 */
 	if (rvd->vdev_guid_sum != ub->ub_guid_sum && mosconfig) {
-		dprintf("spa_load(): vdev guid sum doesn't match the uberblock\n");
 		vdev_set_state(rvd, B_TRUE, VDEV_STATE_CANT_OPEN,
 		    VDEV_AUX_BAD_GUID_SUM);
 		error = ENXIO;
@@ -1127,7 +1124,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	spa->spa_first_txg = spa_last_synced_txg(spa) + 1;
 	error = dsl_pool_open(spa, spa->spa_first_txg, &spa->spa_dsl_pool);
 	if (error) {
-		dprintf("spa_load(): error %i in dsl_pool_open()\n", error);
 		vdev_set_state(rvd, B_TRUE, VDEV_STATE_CANT_OPEN,
 		    VDEV_AUX_CORRUPT_DATA);
 		goto out;
@@ -1338,7 +1334,7 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	 * unopenable vdevs so that the normal autoreplace handler can take
 	 * over.
 	 */
-	if (autoreplace)
+	if (autoreplace && state != SPA_LOAD_TRYIMPORT)
 		spa_check_removed(spa->spa_root_vdev);
 
 	/*
@@ -1358,7 +1354,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	 * indicates one or more toplevel vdevs are faulted.
 	 */
 	if (rvd->vdev_state <= VDEV_STATE_CANT_OPEN) {
-		dprintf("spa_load(): one or more toplevel vdevs are faulted\n");
 		error = ENXIO;
 		goto out;
 	}
@@ -1410,8 +1405,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 out:
 	if (error && error != EBADF)
 		zfs_ereport_post(FM_EREPORT_ZFS_POOL, spa, NULL, NULL, 0, 0);
-	if (error)
-		dprintf("spa_load(): error %i\n", error);
 	spa->spa_load_state = SPA_LOAD_NONE;
 	spa->spa_ena = 0;
 
@@ -4033,6 +4026,8 @@ spa_sync(spa_t *spa, uint64_t txg)
 	bplist_t *bpl = &spa->spa_sync_bplist;
 	vdev_t *rvd = spa->spa_root_vdev;
 	vdev_t *vd;
+	vdev_t *svd[SPA_DVAS_PER_BP];
+	int svdcount = 0;
 	dmu_tx_t *tx;
 	int dirty_vdevs;
 
@@ -4110,28 +4105,29 @@ spa_sync(spa_t *spa, uint64_t txg)
 	 * Rewrite the vdev configuration (which includes the uberblock)
 	 * to commit the transaction group.
 	 *
-	 * If there are any dirty vdevs, sync the uberblock to all vdevs.
-	 * Otherwise, pick a random top-level vdev that's known to be
-	 * visible in the config cache (see spa_vdev_add() for details).
-	 * If the write fails, try the next vdev until we're tried them all.
+	 * If there are no dirty vdevs, we sync the uberblock to a few
+	 * random top-level vdevs that are known to be visible in the
+	 * config cache (see spa_vdev_add() for details).  If there *are*
+	 * dirty vdevs -- or if the sync to our random subset fails --
+	 * then sync the uberblock to all vdevs.
 	 */
-	if (!list_is_empty(&spa->spa_dirty_list)) {
-		VERIFY(vdev_config_sync(rvd, txg) == 0);
-	} else {
+	if (list_is_empty(&spa->spa_dirty_list)) {
 		int children = rvd->vdev_children;
 		int c0 = spa_get_random(children);
 		int c;
 
 		for (c = 0; c < children; c++) {
 			vd = rvd->vdev_child[(c0 + c) % children];
-			if (vd->vdev_ms_array == 0)
+			if (vd->vdev_ms_array == 0 || vd->vdev_islog)
 				continue;
-			if (vdev_config_sync(vd, txg) == 0)
+			svd[svdcount++] = vd;
+			if (svdcount == SPA_DVAS_PER_BP)
 				break;
 		}
-		if (c == children)
-			VERIFY(vdev_config_sync(rvd, txg) == 0);
 	}
+	if (svdcount == 0 || vdev_config_sync(svd, svdcount, txg) != 0)
+		VERIFY3U(vdev_config_sync(rvd->vdev_child,
+		    rvd->vdev_children, txg), ==, 0);
 
 	dmu_tx_commit(tx);
 
@@ -4314,7 +4310,7 @@ spa_has_spare(spa_t *spa, uint64_t guid)
 void
 spa_event_notify(spa_t *spa, vdev_t *vd, const char *name)
 {
-#if 0
+#ifdef _KERNEL
 	sysevent_t		*ev;
 	sysevent_attr_list_t	*attr = NULL;
 	sysevent_value_t	value;
@@ -4348,6 +4344,10 @@ spa_event_notify(spa_t *spa, vdev_t *vd, const char *name)
 				goto done;
 		}
 	}
+
+	if (sysevent_attach_attributes(ev, attr) != 0)
+		goto done;
+	attr = NULL;
 
 	(void) log_sysevent(ev, SE_SLEEP, &eid);
 
