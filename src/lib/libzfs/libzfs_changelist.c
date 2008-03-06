@@ -141,6 +141,9 @@ changelist_prefix(prop_changelist_t *clp)
 				 */
 				(void) zfs_unshare_iscsi(cn->cn_handle);
 				break;
+
+			default:
+				break;
 			}
 		} else {
 			/*
