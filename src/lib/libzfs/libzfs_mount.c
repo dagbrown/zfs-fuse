@@ -20,7 +20,7 @@
  */
 
 /*
- * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -128,12 +128,10 @@ zfs_share_proto_t share_all_proto[] = {
 	PROTO_END
 };
 
-static void
-zfs_iscsi_init(void) __attribute__((constructor));
+#pragma init(zfs_iscsi_init)
 static void
 zfs_iscsi_init(void)
 {
-#if 0
 	void *libiscsitgt;
 
 	if ((libiscsitgt = dlopen("/lib/libiscsitgt.so.1",
@@ -151,7 +149,6 @@ zfs_iscsi_init(void)
 		iscsitgt_zfs_is_shared = NULL;
 		iscsitgt_svc_online = NULL;
 	}
-#endif
 }
 
 /*
@@ -347,9 +344,8 @@ zfs_mount(zfs_handle_t *zhp, const char *options, int flags)
 	}
 
 	/* perform the mount */
-	/* ZFSFUSE */
-	if (zfsfuse_mount(hdl, zfs_get_name(zhp), mountpoint, MS_OPTIONSTR | flags,
-	    MNTTYPE_ZFS, NULL, 0, mntopts, strlen (mntopts)) != 0) {
+	if (mount(zfs_get_name(zhp), mountpoint, MS_OPTIONSTR | flags,
+	    MNTTYPE_ZFS, NULL, 0, mntopts, sizeof (mntopts)) != 0) {
 		/*
 		 * Generic errors are nasty, but there are just way too many
 		 * from mount(), and they're well-understood.  We pick a few
@@ -379,33 +375,14 @@ zfs_mount(zfs_handle_t *zhp, const char *options, int flags)
 static int
 unmount_one(libzfs_handle_t *hdl, const char *mountpoint, int flags)
 {
-	ASSERT((flags & ~MS_FORCE) == 0);
-
-	char *cmd;
-	int res_print;
-
-	if(flags & MS_FORCE)
-		res_print = asprintf(&cmd, "umount -l %s", mountpoint);
-	else
-		res_print = asprintf(&cmd, "umount %s", mountpoint);
-
-	if(res_print == -1) {
-		zfs_error_aux(hdl, strerror(ENOMEM));
-		goto error;
-	}
-
-	int ret = system(cmd);
-	free(cmd);
-	if (ret != 0) {
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "umount failed"));
-		goto error;
+	if (umount2(mountpoint, flags) != 0) {
+		zfs_error_aux(hdl, strerror(errno));
+		return (zfs_error_fmt(hdl, EZFS_UMOUNTFAILED,
+		    dgettext(TEXT_DOMAIN, "cannot unmount '%s'"),
+		    mountpoint));
 	}
 
 	return (0);
-error:
-	return (zfs_error_fmt(hdl, EZFS_UMOUNTFAILED,
-	    dgettext(TEXT_DOMAIN, "cannot unmount '%s'"),
-	    mountpoint));
 }
 
 /*
@@ -558,6 +535,11 @@ static int (*_sa_enable_share)(sa_share_t, char *);
 static int (*_sa_disable_share)(sa_share_t, char *);
 static char *(*_sa_errorstr)(int);
 static int (*_sa_parse_legacy_options)(sa_group_t, char *, char *);
+static boolean_t (*_sa_needs_refresh)(sa_handle_t *);
+static libzfs_handle_t *(*_sa_get_zfs_handle)(sa_handle_t);
+static int (*_sa_zfs_process_share)(sa_handle_t, sa_group_t, sa_share_t,
+    char *, char *, zprop_source_t, char *, char *, char *);
+static void (*_sa_update_sharetab_ts)(sa_handle_t);
 
 /*
  * _zfs_init_libshare()
@@ -566,12 +548,11 @@ static int (*_sa_parse_legacy_options)(sa_group_t, char *, char *);
  * values to be used later. This is triggered by the runtime loader.
  * Make sure the correct ISA version is loaded.
  */
-static void _zfs_init_libshare(void) __attribute__((constructor));
 
+#pragma init(_zfs_init_libshare)
 static void
 _zfs_init_libshare(void)
 {
-#if 0
 	void *libshare;
 	char path[MAXPATHLEN];
 	char isa[MAXISALEN];
@@ -597,10 +578,22 @@ _zfs_init_libshare(void)
 		_sa_errorstr = (char *(*)(int))dlsym(libshare, "sa_errorstr");
 		_sa_parse_legacy_options = (int (*)(sa_group_t, char *, char *))
 		    dlsym(libshare, "sa_parse_legacy_options");
+		_sa_needs_refresh = (boolean_t (*)(sa_handle_t *))
+		    dlsym(libshare, "sa_needs_refresh");
+		_sa_get_zfs_handle = (libzfs_handle_t *(*)(sa_handle_t))
+		    dlsym(libshare, "sa_get_zfs_handle");
+		_sa_zfs_process_share = (int (*)(sa_handle_t, sa_group_t,
+		    sa_share_t, char *, char *, zprop_source_t, char *,
+		    char *, char *))dlsym(libshare, "sa_zfs_process_share");
+		_sa_update_sharetab_ts = (void (*)(sa_handle_t))
+		    dlsym(libshare, "sa_update_sharetab_ts");
 		if (_sa_init == NULL || _sa_fini == NULL ||
 		    _sa_find_share == NULL || _sa_enable_share == NULL ||
 		    _sa_disable_share == NULL || _sa_errorstr == NULL ||
-		    _sa_parse_legacy_options == NULL) {
+		    _sa_parse_legacy_options == NULL ||
+		    _sa_needs_refresh == NULL || _sa_get_zfs_handle == NULL ||
+		    _sa_zfs_process_share == NULL ||
+		    _sa_update_sharetab_ts == NULL) {
 			_sa_init = NULL;
 			_sa_fini = NULL;
 			_sa_disable_share = NULL;
@@ -608,9 +601,12 @@ _zfs_init_libshare(void)
 			_sa_errorstr = NULL;
 			_sa_parse_legacy_options = NULL;
 			(void) dlclose(libshare);
+			_sa_needs_refresh = NULL;
+			_sa_get_zfs_handle = NULL;
+			_sa_zfs_process_share = NULL;
+			_sa_update_sharetab_ts = NULL;
 		}
 	}
-#endif
 }
 
 /*
@@ -628,6 +624,23 @@ zfs_init_libshare(libzfs_handle_t *zhandle, int service)
 
 	if (_sa_init == NULL)
 		ret = SA_CONFIG_ERR;
+
+	if (ret == SA_OK && zhandle->libzfs_shareflags & ZFSSHARE_MISS) {
+		/*
+		 * We had a cache miss. Most likely it is a new ZFS
+		 * dataset that was just created. We want to make sure
+		 * so check timestamps to see if a different process
+		 * has updated any of the configuration. If there was
+		 * some non-ZFS change, we need to re-initialize the
+		 * internal cache.
+		 */
+		zhandle->libzfs_shareflags &= ~ZFSSHARE_MISS;
+		if (_sa_needs_refresh != NULL &&
+		    _sa_needs_refresh(zhandle->libzfs_sharehdl)) {
+			zfs_uninit_libshare(zhandle);
+			zhandle->libzfs_sharehdl = _sa_init(service);
+		}
+	}
 
 	if (ret == SA_OK && zhandle && zhandle->libzfs_sharehdl == NULL)
 		zhandle->libzfs_sharehdl = _sa_init(service);
@@ -720,14 +733,13 @@ zfs_sa_disable_share(sa_share_t share, char *proto)
 static int
 zfs_share_proto(zfs_handle_t *zhp, zfs_share_proto_t *proto)
 {
-	/* ZFSFUSE: not implemented */
-	return 0;
-#if 0
 	char mountpoint[ZFS_MAXPROPLEN];
 	char shareopts[ZFS_MAXPROPLEN];
+	char sourcestr[ZFS_MAXPROPLEN];
 	libzfs_handle_t *hdl = zhp->zfs_hdl;
 	sa_share_t share;
 	zfs_share_proto_t *curr_proto;
+	zprop_source_t sourcetype;
 	int ret;
 
 	if (!zfs_is_mountable(zhp, mountpoint, sizeof (mountpoint), NULL))
@@ -736,7 +748,8 @@ zfs_share_proto(zfs_handle_t *zhp, zfs_share_proto_t *proto)
 	if ((ret = zfs_init_libshare(hdl, SA_INIT_SHARE_API)) != SA_OK) {
 		(void) zfs_error_fmt(hdl, EZFS_SHARENFSFAILED,
 		    dgettext(TEXT_DOMAIN, "cannot share '%s': %s"),
-		    zfs_get_name(zhp), _sa_errorstr(ret));
+		    zfs_get_name(zhp), _sa_errorstr != NULL ?
+		    _sa_errorstr(ret) : "");
 		return (-1);
 	}
 
@@ -745,8 +758,9 @@ zfs_share_proto(zfs_handle_t *zhp, zfs_share_proto_t *proto)
 		 * Return success if there are no share options.
 		 */
 		if (zfs_prop_get(zhp, proto_table[*curr_proto].p_prop,
-		    shareopts, sizeof (shareopts), NULL, NULL,
-		    0, B_FALSE) != 0 || strcmp(shareopts, "off") == 0)
+		    shareopts, sizeof (shareopts), &sourcetype, sourcestr,
+		    ZFS_MAXPROPLEN, B_FALSE) != 0 ||
+		    strcmp(shareopts, "off") == 0)
 			continue;
 
 		/*
@@ -759,6 +773,30 @@ zfs_share_proto(zfs_handle_t *zhp, zfs_share_proto_t *proto)
 			continue;
 
 		share = zfs_sa_find_share(hdl->libzfs_sharehdl, mountpoint);
+		if (share == NULL) {
+			/*
+			 * This may be a new file system that was just
+			 * created so isn't in the internal cache
+			 * (second time through). Rather than
+			 * reloading the entire configuration, we can
+			 * assume ZFS has done the checking and it is
+			 * safe to add this to the internal
+			 * configuration.
+			 */
+			if (_sa_zfs_process_share(hdl->libzfs_sharehdl,
+			    NULL, NULL, mountpoint,
+			    proto_table[*curr_proto].p_name, sourcetype,
+			    shareopts, sourcestr, zhp->zfs_name) != SA_OK) {
+				(void) zfs_error_fmt(hdl,
+				    proto_table[*curr_proto].p_share_err,
+				    dgettext(TEXT_DOMAIN, "cannot share '%s'"),
+				    zfs_get_name(zhp));
+				return (-1);
+			}
+			hdl->libzfs_shareflags |= ZFSSHARE_MISS;
+			share = zfs_sa_find_share(hdl->libzfs_sharehdl,
+			    mountpoint);
+		}
 		if (share != NULL) {
 			int err;
 			err = zfs_sa_enable_share(share,
@@ -780,7 +818,6 @@ zfs_share_proto(zfs_handle_t *zhp, zfs_share_proto_t *proto)
 
 	}
 	return (0);
-#endif
 }
 
 
@@ -992,17 +1029,10 @@ zfs_is_shared_iscsi(zfs_handle_t *zhp)
 int
 zfs_share_iscsi(zfs_handle_t *zhp)
 {
-	/*char shareopts[ZFS_MAXPROPLEN];*/
+	char shareopts[ZFS_MAXPROPLEN];
 	const char *dataset = zhp->zfs_name;
 	libzfs_handle_t *hdl = zhp->zfs_hdl;
 
-	/* ZFSFUSE: not implemented */
-	zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "feature not implemented yet"));
-	return zfs_error_fmt(hdl, EZFS_SHAREISCSIFAILED,
-	                 dgettext(TEXT_DOMAIN, "cannot share '%s'"),
-	                 dataset);
-
-#if 0
 	/*
 	 * Return success if there are no share options.
 	 */
@@ -1027,7 +1057,6 @@ zfs_share_iscsi(zfs_handle_t *zhp)
 	}
 
 	return (0);
-#endif
 }
 
 int
@@ -1088,7 +1117,7 @@ mount_cb(zfs_handle_t *zhp, void *data)
 
 	cbp->cb_datasets[cbp->cb_used++] = zhp;
 
-	return (zfs_iter_children(zhp, mount_cb, cbp));
+	return (zfs_iter_filesystems(zhp, mount_cb, cbp));
 }
 
 static int
@@ -1137,7 +1166,7 @@ zpool_enable_datasets(zpool_handle_t *zhp, const char *mntopts, int flags)
 	int *good;
 
 	/*
-	 * Gather all datasets within the pool.
+	 * Gather all non-snap datasets within the pool.
 	 */
 	if ((cb.cb_datasets = zfs_alloc(hdl, 4 * sizeof (void *))) == NULL)
 		return (-1);
@@ -1149,7 +1178,7 @@ zpool_enable_datasets(zpool_handle_t *zhp, const char *mntopts, int flags)
 	cb.cb_datasets[0] = zfsp;
 	cb.cb_used = 1;
 
-	if (zfs_iter_children(zfsp, mount_cb, &cb) != 0)
+	if (zfs_iter_filesystems(zfsp, mount_cb, &cb) != 0)
 		goto out;
 
 	/*
@@ -1170,13 +1199,13 @@ zpool_enable_datasets(zpool_handle_t *zhp, const char *mntopts, int flags)
 		else
 			good[i] = 1;
 	}
+
 	/*
 	 * Then share all the ones that need to be shared. This needs
 	 * to be a separate pass in order to avoid excessive reloading
 	 * of the configuration. Good should never be NULL since
 	 * zfs_alloc is supposed to exit if memory isn't available.
 	 */
-	zfs_uninit_libshare(hdl);
 	for (i = 0; i < cb.cb_used; i++) {
 		if (good[i] && zfs_share(cb.cb_datasets[i]) != 0)
 			ret = -1;

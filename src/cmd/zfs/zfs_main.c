@@ -20,7 +20,7 @@
  */
 
 /*
- * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -313,6 +313,7 @@ usage(boolean_t requested)
 {
 	int i;
 	boolean_t show_properties = B_FALSE;
+	boolean_t show_permissions = B_FALSE;
 	FILE *fp = requested ? stdout : stderr;
 
 	if (current_command == NULL) {
@@ -343,6 +344,11 @@ usage(boolean_t requested)
 	    strcmp(current_command->name, "list") == 0))
 		show_properties = B_TRUE;
 
+	if (current_command != NULL &&
+	    (strcmp(current_command->name, "allow") == 0 ||
+	    strcmp(current_command->name, "unallow") == 0))
+		show_permissions = B_TRUE;
+
 	if (show_properties) {
 
 		(void) fprintf(fp,
@@ -359,14 +365,25 @@ usage(boolean_t requested)
 		    "with standard units such as K, M, G, etc.\n"));
 		(void) fprintf(fp, gettext("\n\nUser-defined properties can "
 		    "be specified by using a name containing a colon (:).\n"));
+
+	} else if (show_permissions) {
+		(void) fprintf(fp,
+		    gettext("\nThe following permissions are supported:\n"));
+
+		zfs_deleg_permissions();
 	} else {
 		/*
 		 * TRANSLATION NOTE:
 		 * "zfs set|get" must not be localised this is the
 		 * command name and arguments.
 		 */
+
 		(void) fprintf(fp,
 		    gettext("\nFor the property list, run: zfs set|get\n"));
+
+		(void) fprintf(fp,
+		    gettext("\nFor the delegated permission list, run:"
+		    " zfs allow|unallow\n"));
 	}
 
 	/*
@@ -1385,7 +1402,7 @@ upgrade_set_callback(zfs_handle_t *zhp, void *data)
 			/* can't upgrade */
 			(void) printf(gettext("%s: can not be upgraded; "
 			    "the pool version needs to first be upgraded\nto "
-			    "version %llu\n\n"),
+			    "version %d\n\n"),
 			    zfs_get_name(zhp), SPA_VERSION_FUID);
 			cb->cb_numfailed++;
 			return (0);
@@ -1396,7 +1413,7 @@ upgrade_set_callback(zfs_handle_t *zhp, void *data)
 	if (version < cb->cb_version) {
 		char verstr[16];
 		(void) snprintf(verstr, sizeof (verstr),
-		    "%llu", (u_longlong_t) cb->cb_version);
+		    "%llu", cb->cb_version);
 		if (cb->cb_lastfs[0] && !same_pool(zhp, cb->cb_lastfs)) {
 			/*
 			 * If they did "zfs upgrade -a", then we could
@@ -1501,11 +1518,11 @@ zfs_do_upgrade(int argc, char **argv)
 		ret = zfs_for_each(argc, argv, recurse, ZFS_TYPE_FILESYSTEM,
 		    NULL, NULL, upgrade_set_callback, &cb, B_TRUE);
 		(void) printf(gettext("%llu filesystems upgraded\n"),
-		    (u_longlong_t) cb.cb_numupgraded);
+		    cb.cb_numupgraded);
 		if (cb.cb_numsamegraded) {
 			(void) printf(gettext("%llu filesystems already at "
 			    "this version\n"),
-			    (u_longlong_t) cb.cb_numsamegraded);
+			    cb.cb_numsamegraded);
 		}
 		if (cb.cb_numfailed != 0)
 			ret = 1;
@@ -1589,9 +1606,9 @@ print_header(zprop_list_t *pl)
 		if (pl->pl_next == NULL && !right_justify)
 			(void) printf("%s", header);
 		else if (right_justify)
-			(void) printf("%*s", (int) pl->pl_width, header);
+			(void) printf("%*s", pl->pl_width, header);
 		else
-			(void) printf("%-*s", (int) pl->pl_width, header);
+			(void) printf("%-*s", pl->pl_width, header);
 	}
 
 	(void) printf("\n");
@@ -3385,9 +3402,17 @@ unshare_unmount_path(int op, char *path, int flags, boolean_t is_manual)
 			break;
 	}
 	if (ret != 0) {
-		(void) fprintf(stderr, gettext("cannot %s '%s': not "
-		    "currently mounted\n"), cmdname, path);
-		return (1);
+		if (op == OP_SHARE) {
+			(void) fprintf(stderr, gettext("cannot %s '%s': not "
+			    "currently mounted\n"), cmdname, path);
+			return (1);
+		}
+		(void) fprintf(stderr, gettext("warning: %s not in mnttab\n"),
+		    path);
+		if ((ret = umount2(path, flags)) != 0)
+			(void) fprintf(stderr, gettext("%s: %s\n"), path,
+			    strerror(errno));
+		return (ret != 0);
 	}
 
 	if (strcmp(entry.mnt_fstype, MNTTYPE_ZFS) != 0) {

@@ -19,7 +19,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -335,8 +335,8 @@ uint64_t dmu_buf_refcount(dmu_buf_t *db);
  * individually with dmu_buf_rele.
  */
 int dmu_buf_hold_array_by_bonus(dmu_buf_t *db, uint64_t offset,
-    uint64_t length, int read, const void *tag, int *numbufsp, dmu_buf_t ***dbpp);
-void dmu_buf_rele_array(dmu_buf_t **, int numbufs, const void *tag);
+    uint64_t length, int read, void *tag, int *numbufsp, dmu_buf_t ***dbpp);
+void dmu_buf_rele_array(dmu_buf_t **, int numbufs, void *tag);
 
 /*
  * Returns NULL on success, or the existing user ptr if it's already
@@ -605,6 +605,7 @@ int dmu_recv_begin(char *tofs, char *tosnap, struct drr_begin *,
     boolean_t force, objset_t *origin, boolean_t online, dmu_recv_cookie_t *);
 int dmu_recv_stream(dmu_recv_cookie_t *drc, struct vnode *vp, offset_t *voffp);
 int dmu_recv_end(dmu_recv_cookie_t *drc);
+void dmu_recv_abort_cleanup(dmu_recv_cookie_t *drc);
 
 /* CRC64 table */
 #define	ZFS_CRC64_POLY	0xC96C5795D7870F42ULL	/* ECMA-182, reflected form */

@@ -62,6 +62,7 @@
 #include <sys/sunddi.h>
 
 #include "zfs_prop.h"
+#include "zfs_comutil.h"
 
 int zio_taskq_threads = 8;
 
@@ -76,76 +77,52 @@ static void spa_sync_props(void *arg1, void *arg2, cred_t *cr, dmu_tx_t *tx);
 /*
  * Add a (source=src, propname=propval) list to an nvlist.
  */
-static int
+static void
 spa_prop_add_list(nvlist_t *nvl, zpool_prop_t prop, char *strval,
     uint64_t intval, zprop_source_t src)
 {
 	const char *propname = zpool_prop_to_name(prop);
 	nvlist_t *propval;
-	int err = 0;
 
-	if (err = nvlist_alloc(&propval, NV_UNIQUE_NAME, KM_SLEEP))
-		return (err);
+	VERIFY(nvlist_alloc(&propval, NV_UNIQUE_NAME, KM_SLEEP) == 0);
+	VERIFY(nvlist_add_uint64(propval, ZPROP_SOURCE, src) == 0);
 
-	if (err = nvlist_add_uint64(propval, ZPROP_SOURCE, src))
-		goto out;
+	if (strval != NULL)
+		VERIFY(nvlist_add_string(propval, ZPROP_VALUE, strval) == 0);
+	else
+		VERIFY(nvlist_add_uint64(propval, ZPROP_VALUE, intval) == 0);
 
-	if (strval != NULL) {
-		if (err = nvlist_add_string(propval, ZPROP_VALUE, strval))
-			goto out;
-	} else {
-		if (err = nvlist_add_uint64(propval, ZPROP_VALUE, intval))
-			goto out;
-	}
-
-	err = nvlist_add_nvlist(nvl, propname, propval);
-out:
+	VERIFY(nvlist_add_nvlist(nvl, propname, propval) == 0);
 	nvlist_free(propval);
-	return (err);
 }
 
 /*
  * Get property values from the spa configuration.
  */
-static int
+static void
 spa_prop_get_config(spa_t *spa, nvlist_t **nvp)
 {
 	uint64_t size = spa_get_space(spa);
 	uint64_t used = spa_get_alloc(spa);
 	uint64_t cap, version;
 	zprop_source_t src = ZPROP_SRC_NONE;
-	int err;
 	char *cachefile;
 	size_t len;
 
 	/*
 	 * readonly properties
 	 */
-	if (err = spa_prop_add_list(*nvp, ZPOOL_PROP_NAME, spa->spa_name,
-	    0, src))
-		return (err);
-
-	if (err = spa_prop_add_list(*nvp, ZPOOL_PROP_SIZE, NULL, size, src))
-		return (err);
-
-	if (err = spa_prop_add_list(*nvp, ZPOOL_PROP_USED, NULL, used, src))
-		return (err);
-
-	if (err = spa_prop_add_list(*nvp, ZPOOL_PROP_AVAILABLE, NULL,
-	    size - used, src))
-		return (err);
+	spa_prop_add_list(*nvp, ZPOOL_PROP_NAME, spa->spa_name, 0, src);
+	spa_prop_add_list(*nvp, ZPOOL_PROP_SIZE, NULL, size, src);
+	spa_prop_add_list(*nvp, ZPOOL_PROP_USED, NULL, used, src);
+	spa_prop_add_list(*nvp, ZPOOL_PROP_AVAILABLE, NULL, size - used, src);
 
 	cap = (size == 0) ? 0 : (used * 100 / size);
-	if (err = spa_prop_add_list(*nvp, ZPOOL_PROP_CAPACITY, NULL, cap, src))
-		return (err);
+	spa_prop_add_list(*nvp, ZPOOL_PROP_CAPACITY, NULL, cap, src);
 
-	if (err = spa_prop_add_list(*nvp, ZPOOL_PROP_GUID, NULL,
-	    spa_guid(spa), src))
-		return (err);
-
-	if (err = spa_prop_add_list(*nvp, ZPOOL_PROP_HEALTH, NULL,
-	    spa->spa_root_vdev->vdev_state, src))
-		return (err);
+	spa_prop_add_list(*nvp, ZPOOL_PROP_GUID, NULL, spa_guid(spa), src);
+	spa_prop_add_list(*nvp, ZPOOL_PROP_HEALTH, NULL,
+	    spa->spa_root_vdev->vdev_state, src);
 
 	/*
 	 * settable properties that are not stored in the pool property object.
@@ -155,20 +132,15 @@ spa_prop_get_config(spa_t *spa, nvlist_t **nvp)
 		src = ZPROP_SRC_DEFAULT;
 	else
 		src = ZPROP_SRC_LOCAL;
-	if (err = spa_prop_add_list(*nvp, ZPOOL_PROP_VERSION, NULL,
-	    version, src))
-		return (err);
+	spa_prop_add_list(*nvp, ZPOOL_PROP_VERSION, NULL, version, src);
 
-	if (spa->spa_root != NULL) {
-		src = ZPROP_SRC_LOCAL;
-		if (err = spa_prop_add_list(*nvp, ZPOOL_PROP_ALTROOT,
-		    spa->spa_root, 0, src))
-			return (err);
-	}
+	if (spa->spa_root != NULL)
+		spa_prop_add_list(*nvp, ZPOOL_PROP_ALTROOT, spa->spa_root,
+		    0, ZPROP_SRC_LOCAL);
 
 	if (spa->spa_config_dir != NULL) {
 		if (strcmp(spa->spa_config_dir, "none") == 0) {
-			err = spa_prop_add_list(*nvp, ZPOOL_PROP_CACHEFILE,
+			spa_prop_add_list(*nvp, ZPOOL_PROP_CACHEFILE,
 			    spa->spa_config_dir, 0, ZPROP_SRC_LOCAL);
 		} else {
 			len = strlen(spa->spa_config_dir) +
@@ -176,16 +148,11 @@ spa_prop_get_config(spa_t *spa, nvlist_t **nvp)
 			cachefile = kmem_alloc(len, KM_SLEEP);
 			(void) snprintf(cachefile, len, "%s/%s",
 			    spa->spa_config_dir, spa->spa_config_file);
-			err = spa_prop_add_list(*nvp, ZPOOL_PROP_CACHEFILE,
+			spa_prop_add_list(*nvp, ZPOOL_PROP_CACHEFILE,
 			    cachefile, 0, ZPROP_SRC_LOCAL);
 			kmem_free(cachefile, len);
 		}
-
-		if (err)
-			return (err);
 	}
-
-	return (0);
 }
 
 /*
@@ -199,14 +166,12 @@ spa_prop_get(spa_t *spa, nvlist_t **nvp)
 	objset_t *mos = spa->spa_meta_objset;
 	int err;
 
-	if (err = nvlist_alloc(nvp, NV_UNIQUE_NAME, KM_SLEEP))
-		return (err);
+	VERIFY(nvlist_alloc(nvp, NV_UNIQUE_NAME, KM_SLEEP) == 0);
 
 	/*
 	 * Get properties from the spa config.
 	 */
-	if (err = spa_prop_get_config(spa, nvp))
-		goto out;
+	spa_prop_get_config(spa, nvp);
 
 	mutex_enter(&spa->spa_props_lock);
 	/* If no pool property object, no more prop to get. */
@@ -260,8 +225,7 @@ spa_prop_get(spa_t *spa, nvlist_t **nvp)
 				intval = za.za_first_integer;
 			}
 
-			err = spa_prop_add_list(*nvp, prop, strval,
-			    intval, src);
+			spa_prop_add_list(*nvp, prop, strval, intval, src);
 
 			if (strval != NULL)
 				kmem_free(strval,
@@ -278,7 +242,7 @@ spa_prop_get(spa_t *spa, nvlist_t **nvp)
 				kmem_free(strval, za.za_num_integers);
 				break;
 			}
-			err = spa_prop_add_list(*nvp, prop, strval, 0, src);
+			spa_prop_add_list(*nvp, prop, strval, 0, src);
 			kmem_free(strval, za.za_num_integers);
 			break;
 
@@ -291,6 +255,7 @@ spa_prop_get(spa_t *spa, nvlist_t **nvp)
 out:
 	if (err && err != ENOENT) {
 		nvlist_free(*nvp);
+		*nvp = NULL;
 		return (err);
 	}
 
@@ -1071,7 +1036,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 		goto out;
 
 	if (rvd->vdev_state <= VDEV_STATE_CANT_OPEN) {
-		dprintf("spa_load(): rvd->vdev_state <= VDEV_STATE_CANT_OPEN\n");
 		error = ENXIO;
 		goto out;
 	}
@@ -1090,7 +1054,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	 * If we weren't able to find a single valid uberblock, return failure.
 	 */
 	if (ub->ub_txg == 0) {
-		dprintf("spa_load(): can't find single valid uberblock\n");
 		vdev_set_state(rvd, B_TRUE, VDEV_STATE_CANT_OPEN,
 		    VDEV_AUX_CORRUPT_DATA);
 		error = ENXIO;
@@ -1112,7 +1075,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	 * incomplete configuration.
 	 */
 	if (rvd->vdev_guid_sum != ub->ub_guid_sum && mosconfig) {
-		dprintf("spa_load(): vdev guid sum doesn't match the uberblock\n");
 		vdev_set_state(rvd, B_TRUE, VDEV_STATE_CANT_OPEN,
 		    VDEV_AUX_BAD_GUID_SUM);
 		error = ENXIO;
@@ -1127,7 +1089,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	spa->spa_first_txg = spa_last_synced_txg(spa) + 1;
 	error = dsl_pool_open(spa, spa->spa_first_txg, &spa->spa_dsl_pool);
 	if (error) {
-		dprintf("spa_load(): error %i in dsl_pool_open()\n", error);
 		vdev_set_state(rvd, B_TRUE, VDEV_STATE_CANT_OPEN,
 		    VDEV_AUX_CORRUPT_DATA);
 		goto out;
@@ -1358,7 +1319,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 	 * indicates one or more toplevel vdevs are faulted.
 	 */
 	if (rvd->vdev_state <= VDEV_STATE_CANT_OPEN) {
-		dprintf("spa_load(): one or more toplevel vdevs are faulted\n");
 		error = ENXIO;
 		goto out;
 	}
@@ -1410,8 +1370,6 @@ spa_load(spa_t *spa, nvlist_t *config, spa_load_state_t state, int mosconfig)
 out:
 	if (error && error != EBADF)
 		zfs_ereport_post(FM_EREPORT_ZFS_POOL, spa, NULL, NULL, 0, 0);
-	if (error)
-		dprintf("spa_load(): error %i\n", error);
 	spa->spa_load_state = SPA_LOAD_NONE;
 	spa->spa_ena = 0;
 
@@ -1939,7 +1897,7 @@ spa_create(const char *pool, nvlist_t *nvroot, nvlist_t *props,
 	ASSERT(error != 0 || rvd != NULL);
 	ASSERT(error != 0 || spa->spa_root_vdev == rvd);
 
-	if (error == 0 && rvd->vdev_children == 0)
+	if (error == 0 && !zfs_allocatable_devs(nvroot))
 		error = EINVAL;
 
 	if (error == 0 &&
@@ -4317,7 +4275,7 @@ spa_has_spare(spa_t *spa, uint64_t guid)
 void
 spa_event_notify(spa_t *spa, vdev_t *vd, const char *name)
 {
-#if 0
+#ifdef _KERNEL
 	sysevent_t		*ev;
 	sysevent_attr_list_t	*attr = NULL;
 	sysevent_value_t	value;

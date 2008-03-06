@@ -19,7 +19,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -130,7 +130,6 @@
 #include <vm/anon.h>
 #include <sys/fs/swapnode.h>
 #include <sys/dnlc.h>
-#include <sys/kmem.h>
 #endif
 #include <sys/callb.h>
 #include <sys/kstat.h>
@@ -478,6 +477,13 @@ static void arc_evict_ghost(arc_state_t *state, spa_t *spa, int64_t bytes);
 #define	HDR_L2_WRITE_HEAD(hdr)	((hdr)->b_flags & ARC_L2_WRITE_HEAD)
 
 /*
+ * Other sizes
+ */
+
+#define	HDR_SIZE ((int64_t)sizeof (arc_buf_hdr_t))
+#define	L2HDR_SIZE ((int64_t)sizeof (l2arc_buf_hdr_t))
+
+/*
  * Hash table routines
  */
 
@@ -739,7 +745,7 @@ hdr_cons(void *vbuf, void *unused, int kmflag)
 	cv_init(&buf->b_cv, NULL, CV_DEFAULT, NULL);
 	mutex_init(&buf->b_freeze_lock, NULL, MUTEX_DEFAULT, NULL);
 
-	ARCSTAT_INCR(arcstat_hdr_size, sizeof (arc_buf_hdr_t));
+	ARCSTAT_INCR(arcstat_hdr_size, HDR_SIZE);
 	return (0);
 }
 
@@ -757,7 +763,7 @@ hdr_dest(void *vbuf, void *unused)
 	cv_destroy(&buf->b_cv);
 	mutex_destroy(&buf->b_freeze_lock);
 
-	ARCSTAT_INCR(arcstat_hdr_size, -sizeof (arc_buf_hdr_t));
+	ARCSTAT_INCR(arcstat_hdr_size, -HDR_SIZE);
 }
 
 /*
@@ -1016,7 +1022,6 @@ arc_change_state(arc_state_t *new_state, arc_buf_hdr_t *ab, kmutex_t *hash_lock)
 				to_delta = ab->b_size;
 			}
 			atomic_add_64(size, to_delta);
-			atomic_add_64(&new_state->arcs_size, to_delta);
 
 			if (use_mutex)
 				mutex_exit(&new_state->arcs_mtx);
@@ -1029,7 +1034,7 @@ arc_change_state(arc_state_t *new_state, arc_buf_hdr_t *ab, kmutex_t *hash_lock)
 	}
 
 	/* adjust state sizes */
-	if (to_delta && (refcnt != 0 || new_state == arc_anon))
+	if (to_delta)
 		atomic_add_64(&new_state->arcs_size, to_delta);
 	if (from_delta) {
 		ASSERT3U(old_state->arcs_size, >=, from_delta);
@@ -1716,7 +1721,7 @@ arc_shrink(void)
 	if (arc_c > arc_c_min) {
 		uint64_t to_free;
 
-#if 0
+#ifdef _KERNEL
 		to_free = MAX(arc_c >> arc_shrink_shift, ptob(needfree));
 #else
 		to_free = arc_c >> arc_shrink_shift;
@@ -1742,7 +1747,6 @@ arc_shrink(void)
 static int
 arc_reclaim_needed(void)
 {
-#if 0
 	uint64_t extra;
 
 #ifdef _KERNEL
@@ -1796,7 +1800,6 @@ arc_reclaim_needed(void)
 	if (spa_get_random(100) == 0)
 		return (1);
 #endif
-#endif
 	return (0);
 }
 
@@ -1809,7 +1812,7 @@ arc_kmem_reap_now(arc_reclaim_strategy_t strat)
 	extern kmem_cache_t	*zio_buf_cache[];
 	extern kmem_cache_t	*zio_data_buf_cache[];
 
-#if 0
+#ifdef _KERNEL
 	if (arc_meta_used >= arc_meta_limit) {
 		/*
 		 * We are exceeding our meta-data cache limit.
@@ -1849,7 +1852,7 @@ arc_kmem_reap_now(arc_reclaim_strategy_t strat)
 static void
 arc_reclaim_thread(void)
 {
-	int64_t			growtime = 0;
+	clock_t			growtime = 0;
 	arc_reclaim_strategy_t	last_reclaim = ARC_RECLAIM_CONS;
 	callb_cpr_t		cpr;
 
@@ -1872,11 +1875,11 @@ arc_reclaim_thread(void)
 			}
 
 			/* reset the growth delay for every reclaim */
-			growtime = lbolt64 + (arc_grow_retry * hz);
+			growtime = lbolt + (arc_grow_retry * hz);
 
 			arc_kmem_reap_now(last_reclaim);
 
-		} else if (arc_no_grow && lbolt64 >= growtime) {
+		} else if (arc_no_grow && lbolt >= growtime) {
 			arc_no_grow = FALSE;
 		}
 
@@ -1972,7 +1975,7 @@ arc_evict_needed(arc_buf_contents_t type)
 	if (type == ARC_BUFC_METADATA && arc_meta_used >= arc_meta_limit)
 		return (1);
 
-#if 0
+#ifdef _KERNEL
 	/*
 	 * If zio data pages are being allocated out of a separate heap segment,
 	 * then enforce that the size of available vmem for this area remains
@@ -2872,11 +2875,13 @@ arc_has_callback(arc_buf_t *buf)
 	return (buf->b_efunc != NULL);
 }
 
+#ifdef ZFS_DEBUG
 int
 arc_referenced(arc_buf_t *buf)
 {
 	return (refcount_count(&buf->b_hdr->b_refcnt));
 }
+#endif
 
 static void
 arc_write_ready(zio_t *zio)
@@ -3147,7 +3152,7 @@ arc_init(void)
 	/* Start out with 1/8 of all memory */
 	arc_c = physmem * PAGESIZE / 8;
 
-#if 0
+#ifdef _KERNEL
 	/*
 	 * On architectures where the physical memory can be larger
 	 * than the addressable space (intel in 32-bit mode), we may
@@ -3156,14 +3161,14 @@ arc_init(void)
 	arc_c = MIN(arc_c, vmem_size(heap_arena, VMEM_ALLOC | VMEM_FREE) / 8);
 #endif
 
-	/* set min cache to 16 MB */
-	arc_c_min = 16<<20;
-#ifdef _KERNEL
-	/* set max cache to ZFSFUSE_MAX_ARCSIZE */
-	arc_c_max = ZFSFUSE_MAX_ARCSIZE;
-#else
-	arc_c_max = 64<<20;
-#endif
+	/* set min cache to 1/32 of all memory, or 64MB, whichever is more */
+	arc_c_min = MAX(arc_c / 4, 64<<20);
+	/* set max to 3/4 of all memory, or all but 1GB, whichever is more */
+	if (arc_c * 8 >= 1<<30)
+		arc_c_max = (arc_c * 8) - (1<<30);
+	else
+		arc_c_max = arc_c_min;
+	arc_c_max = MAX(arc_c * 6, arc_c_max);
 
 	/*
 	 * Allow the tunables to override our calculations if they are
@@ -3408,17 +3413,15 @@ arc_fini(void)
 static void
 l2arc_hdr_stat_add(void)
 {
-	ARCSTAT_INCR(arcstat_l2_hdr_size, sizeof (arc_buf_hdr_t) +
-	    sizeof (l2arc_buf_hdr_t));
-	ARCSTAT_INCR(arcstat_hdr_size, -sizeof (arc_buf_hdr_t));
+	ARCSTAT_INCR(arcstat_l2_hdr_size, HDR_SIZE + L2HDR_SIZE);
+	ARCSTAT_INCR(arcstat_hdr_size, -HDR_SIZE);
 }
 
 static void
 l2arc_hdr_stat_remove(void)
 {
-	ARCSTAT_INCR(arcstat_l2_hdr_size, -sizeof (arc_buf_hdr_t) -
-	    sizeof (l2arc_buf_hdr_t));
-	ARCSTAT_INCR(arcstat_hdr_size, sizeof (arc_buf_hdr_t));
+	ARCSTAT_INCR(arcstat_l2_hdr_size, -(HDR_SIZE + L2HDR_SIZE));
+	ARCSTAT_INCR(arcstat_hdr_size, HDR_SIZE);
 }
 
 /*

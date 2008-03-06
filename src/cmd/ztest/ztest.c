@@ -19,7 +19,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -2839,14 +2839,29 @@ ztest_verify_blocks(char *pool)
 	int status;
 	char zdb[MAXPATHLEN + MAXNAMELEN + 20];
 	char zbuf[1024];
+	char *bin;
+	char *ztest;
+	char *isa;
+	int isalen;
 	FILE *fp;
 
-	/* zfs-fuse: ztest is never installed, so zdb should be in ../zdb/ */
+	(void) realpath(getexecname(), zdb);
+
+	/* zdb lives in /usr/sbin, while ztest lives in /usr/bin */
+	bin = strstr(zdb, "/usr/bin/");
+	ztest = strstr(bin, "/ztest");
+	isa = bin + 8;
+	isalen = ztest - isa;
+	isa = strdup(isa);
 	/* LINTED */
-	(void) sprintf(zdb, "../zdb/zdb -bc%s%s -U -O %s %s",
+	(void) sprintf(bin,
+	    "/usr/sbin%.*s/zdb -bc%s%s -U /tmp/zpool.cache -O %s %s",
+	    isalen,
+	    isa,
 	    zopt_verbose >= 3 ? "s" : "",
 	    zopt_verbose >= 4 ? "v" : "",
 	    ztest_random(2) == 0 ? "pre" : "post", pool);
+	free(isa);
 
 	if (zopt_verbose >= 5)
 		(void) printf("Executing %s\n", strstr(zdb, "zdb "));

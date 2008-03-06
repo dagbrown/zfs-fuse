@@ -19,7 +19,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -179,11 +179,7 @@ int spa_mode;
 
 #ifdef ZFS_DEBUG
 /* Everything except dprintf is on by default in debug builds */
-#ifdef _KERNEL
 int zfs_flags = ~ZFS_DEBUG_DPRINTF;
-#else
-int zfs_flags = ~0;
-#endif
 #else
 int zfs_flags = 0;
 #endif
@@ -1238,6 +1234,7 @@ spa_init(int mode)
 	zio_init();
 	dmu_init();
 	zil_init();
+	vdev_cache_stat_init();
 	zfs_prop_init();
 	zpool_prop_init();
 	spa_config_load();
@@ -1248,6 +1245,7 @@ spa_fini(void)
 {
 	spa_evict_all();
 
+	vdev_cache_stat_fini();
 	zil_fini();
 	dmu_fini();
 	zio_fini();

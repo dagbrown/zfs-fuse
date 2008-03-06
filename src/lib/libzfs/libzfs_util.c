@@ -19,7 +19,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -44,7 +44,6 @@
 #include <sys/types.h>
 
 #include <libzfs.h>
-#include <zfsfuse.h>
 
 #include "libzfs_impl.h"
 #include "zfs_prop.h"
@@ -319,9 +318,9 @@ zfs_standard_error_fmt(libzfs_handle_t *hdl, int error, const char *fmt, ...)
 		return (-1);
 	}
 
-
 	switch (error) {
 	case ENXIO:
+	case ENODEV:
 		zfs_verror(hdl, EZFS_IO, fmt, ap);
 		break;
 
@@ -354,6 +353,9 @@ zfs_standard_error_fmt(libzfs_handle_t *hdl, int error, const char *fmt, ...)
 		break;
 	case ENAMETOOLONG:
 		zfs_verror(hdl, EZFS_NAMETOOLONG, fmt, ap);
+		break;
+	case ENOTSUP:
+		zfs_verror(hdl, EZFS_BADVERSION, fmt, ap);
 		break;
 	default:
 		zfs_error_aux(hdl, strerror(errno));
@@ -511,13 +513,13 @@ zfs_nicenum(uint64_t num, char *buf, size_t buflen)
 	u = " KMGTPE"[index];
 
 	if (index == 0) {
-		(void) snprintf(buf, buflen, "%llu", (u_longlong_t) n);
+		(void) snprintf(buf, buflen, "%llu", n);
 	} else if ((num & ((1ULL << 10 * index) - 1)) == 0) {
 		/*
 		 * If this is an even multiple of the base, always display
 		 * without any decimal precision.
 		 */
-		(void) snprintf(buf, buflen, "%llu%c", (u_longlong_t) n, u);
+		(void) snprintf(buf, buflen, "%llu%c", n, u);
 	} else {
 		/*
 		 * We want to choose a precision that reflects the best choice
@@ -552,13 +554,12 @@ libzfs_init(void)
 		return (NULL);
 	}
 
-	/* ZFSFUSE */
-	if ((hdl->libzfs_fd = zfsfuse_open(ZFS_DEV_NAME, O_RDWR)) == -1) {
+	if ((hdl->libzfs_fd = open(ZFS_DEV, O_RDWR)) < 0) {
 		free(hdl);
 		return (NULL);
 	}
 
-	if ((hdl->libzfs_mnttab = setmntent(MNTTAB, "r")) == NULL) {
+	if ((hdl->libzfs_mnttab = fopen(MNTTAB, "r")) == NULL) {
 		(void) close(hdl->libzfs_fd);
 		free(hdl);
 		return (NULL);
@@ -577,7 +578,7 @@ libzfs_fini(libzfs_handle_t *hdl)
 {
 	(void) close(hdl->libzfs_fd);
 	if (hdl->libzfs_mnttab)
-		(void) endmntent(hdl->libzfs_mnttab);
+		(void) fclose(hdl->libzfs_mnttab);
 	if (hdl->libzfs_sharetab)
 		(void) fclose(hdl->libzfs_sharetab);
 	zfs_uninit_libshare(hdl);
@@ -655,7 +656,7 @@ zcmd_alloc_dst_nvlist(libzfs_handle_t *hdl, zfs_cmd_t *zc, size_t len)
 		len = 2048;
 	zc->zc_nvlist_dst_size = len;
 	if ((zc->zc_nvlist_dst = (uint64_t)(uintptr_t)
-	    zfs_alloc(hdl, zc->zc_nvlist_dst_size)) == (uint64_t)(uintptr_t) NULL)
+	    zfs_alloc(hdl, zc->zc_nvlist_dst_size)) == NULL)
 		return (-1);
 
 	return (0);
@@ -672,7 +673,7 @@ zcmd_expand_dst_nvlist(libzfs_handle_t *hdl, zfs_cmd_t *zc)
 	free((void *)(uintptr_t)zc->zc_nvlist_dst);
 	if ((zc->zc_nvlist_dst = (uint64_t)(uintptr_t)
 	    zfs_alloc(hdl, zc->zc_nvlist_dst_size))
-	    == (uint64_t)(uintptr_t) NULL)
+	    == NULL)
 		return (-1);
 
 	return (0);
