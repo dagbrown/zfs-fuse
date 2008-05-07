@@ -80,6 +80,7 @@
 
 #include "zfs_namecheck.h"
 
+#if 0
 static void *zvol_state;
 
 #define	ZVOL_DUMPSIZE		"dumpsize"
@@ -198,6 +199,7 @@ zvol_readonly_changed_cb(void *arg, uint64_t newval)
 	else
 		zv->zv_flags &= ~ZVOL_RDONLY;
 }
+#endif
 
 int
 zvol_get_stats(objset_t *os, nvlist_t *nv)
@@ -223,6 +225,7 @@ zvol_get_stats(objset_t *os, nvlist_t *nv)
 	return (error);
 }
 
+#if 0
 /*
  * Find a free minor number.
  */
@@ -1828,3 +1831,4 @@ zvol_dump_fini(zvol_state_t *zv)
 
 	return (0);
 }
+#endif

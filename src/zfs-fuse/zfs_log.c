@@ -654,7 +654,7 @@ zfs_log_acl(zilog_t *zilog, dmu_tx_t *tx, znode_t *zp,
 	txsize = lrsize +
 	    ((txtype == TX_ACL) ? ZIL_ACE_LENGTH(aclbytes) : aclbytes) +
 	    (fuidp ? fuidp->z_domain_str_sz : 0) +
-	    sizeof (uint64) * (fuidp ? fuidp->z_fuid_cnt : 0);
+	    sizeof (uint64_t) * (fuidp ? fuidp->z_fuid_cnt : 0);
 
 	itx = zil_itx_create(txtype, txsize);
 
