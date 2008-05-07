@@ -516,6 +516,7 @@ zfs_do_create(int argc, char **argv)
 	char *propname;
 	char *propval = NULL;
 	char *strval;
+	int canmount;
 
 	if (nvlist_alloc(&props, NV_UNIQUE_NAME, 0) != 0) {
 		(void) fprintf(stderr, gettext("internal error: "
@@ -673,22 +674,29 @@ zfs_do_create(int argc, char **argv)
 
 	if ((zhp = zfs_open(g_zfs, argv[0], ZFS_TYPE_DATASET)) == NULL)
 		goto error;
+	/*
+	 * if the user doesn't want the dataset automatically mounted,
+	 * then skip the mount/share step
+	 */
+
+	canmount = zfs_prop_get_int(zhp, ZFS_PROP_CANMOUNT);
 
 	/*
 	 * Mount and/or share the new filesystem as appropriate.  We provide a
 	 * verbose error message to let the user know that their filesystem was
 	 * in fact created, even if we failed to mount or share it.
 	 */
-	if (zfs_mount(zhp, NULL, 0) != 0) {
-		(void) fprintf(stderr, gettext("filesystem successfully "
-		    "created, but not mounted\n"));
-		ret = 1;
-	} else if (zfs_share(zhp) != 0) {
-		(void) fprintf(stderr, gettext("filesystem successfully "
-		    "created, but not shared\n"));
-		ret = 1;
-	} else {
-		ret = 0;
+	ret = 0;
+	if (canmount == ZFS_CANMOUNT_ON) {
+		if (zfs_mount(zhp, NULL, 0) != 0) {
+			(void) fprintf(stderr, gettext("filesystem "
+			    "successfully created, but not mounted\n"));
+			ret = 1;
+		} else if (zfs_share(zhp) != 0) {
+			(void) fprintf(stderr, gettext("filesystem "
+			    "successfully created, but not shared\n"));
+			ret = 1;
+		}
 	}
 
 error:
@@ -1402,7 +1410,7 @@ upgrade_set_callback(zfs_handle_t *zhp, void *data)
 			/* can't upgrade */
 			(void) printf(gettext("%s: can not be upgraded; "
 			    "the pool version needs to first be upgraded\nto "
-			    "version %llu\n\n"),
+			    "version %d\n\n"),
 			    zfs_get_name(zhp), SPA_VERSION_FUID);
 			cb->cb_numfailed++;
 			return (0);
@@ -1413,7 +1421,7 @@ upgrade_set_callback(zfs_handle_t *zhp, void *data)
 	if (version < cb->cb_version) {
 		char verstr[16];
 		(void) snprintf(verstr, sizeof (verstr),
-		    "%llu", (u_longlong_t) cb->cb_version);
+		    "%llu", cb->cb_version);
 		if (cb->cb_lastfs[0] && !same_pool(zhp, cb->cb_lastfs)) {
 			/*
 			 * If they did "zfs upgrade -a", then we could
@@ -1518,11 +1526,11 @@ zfs_do_upgrade(int argc, char **argv)
 		ret = zfs_for_each(argc, argv, recurse, ZFS_TYPE_FILESYSTEM,
 		    NULL, NULL, upgrade_set_callback, &cb, B_TRUE);
 		(void) printf(gettext("%llu filesystems upgraded\n"),
-		    (u_longlong_t) cb.cb_numupgraded);
+		    cb.cb_numupgraded);
 		if (cb.cb_numsamegraded) {
 			(void) printf(gettext("%llu filesystems already at "
 			    "this version\n"),
-			    (u_longlong_t) cb.cb_numsamegraded);
+			    cb.cb_numsamegraded);
 		}
 		if (cb.cb_numfailed != 0)
 			ret = 1;
@@ -1606,9 +1614,9 @@ print_header(zprop_list_t *pl)
 		if (pl->pl_next == NULL && !right_justify)
 			(void) printf("%s", header);
 		else if (right_justify)
-			(void) printf("%*s", (int) pl->pl_width, header);
+			(void) printf("%*s", pl->pl_width, header);
 		else
-			(void) printf("%-*s", (int) pl->pl_width, header);
+			(void) printf("%-*s", pl->pl_width, header);
 	}
 
 	(void) printf("\n");
@@ -3023,7 +3031,16 @@ share_mount_one(zfs_handle_t *zhp, int op, int flags, char *protocol,
 			return (1);
 		}
 
-		if (!canmount) {
+		/*
+		 * canmount	explicit	outcome
+		 * on		no		pass through
+		 * on		yes		pass through
+		 * off		no		return 0
+		 * off		yes		display error, return 1
+		 * noauto	no		return 0
+		 * noauto	yes		pass through
+		 */
+		if (canmount == ZFS_CANMOUNT_OFF) {
 			if (!explicit)
 				return (0);
 
@@ -3031,6 +3048,8 @@ share_mount_one(zfs_handle_t *zhp, int op, int flags, char *protocol,
 			    "'canmount' property is set to 'off'\n"), cmdname,
 			    zfs_get_name(zhp));
 			return (1);
+		} else if (canmount == ZFS_CANMOUNT_NOAUTO && !explicit) {
+			return (0);
 		}
 
 		/*
@@ -3178,13 +3197,32 @@ report_mount_progress(int current, int total)
 	(void) fflush(stdout);
 }
 
+static void
+append_options(char *mntopts, char *newopts)
+{
+	int len = strlen(mntopts);
+
+	/* original length plus new string to append plus 1 for the comma */
+	if (len + 1 + strlen(newopts) >= MNT_LINE_MAX) {
+		(void) fprintf(stderr, gettext("the opts argument for "
+		    "'%c' option is too long (more than %d chars)\n"),
+		    "-o", MNT_LINE_MAX);
+		usage(B_FALSE);
+	}
+
+	if (*mntopts)
+		mntopts[len++] = ',';
+
+	(void) strcpy(&mntopts[len], newopts);
+}
+
 static int
 share_mount(int op, int argc, char **argv)
 {
 	int do_all = 0;
 	boolean_t verbose = B_FALSE;
 	int c, ret = 0;
-	const char *options = NULL;
+	char *options = NULL;
 	int types, flags = 0;
 
 	/* check options */
@@ -3198,14 +3236,17 @@ share_mount(int op, int argc, char **argv)
 			verbose = B_TRUE;
 			break;
 		case 'o':
-			if (strlen(optarg) <= MNT_LINE_MAX) {
-				options = optarg;
-				break;
+			if (*optarg == '\0') {
+				(void) fprintf(stderr, gettext("empty mount "
+				    "options (-o) specified\n"));
+				usage(B_FALSE);
 			}
-			(void) fprintf(stderr, gettext("the opts argument for "
-			    "'%c' option is too long (more than %d chars)\n"),
-			    optopt, MNT_LINE_MAX);
-			usage(B_FALSE);
+
+			if (options == NULL)
+				options = safe_malloc(MNT_LINE_MAX + 1);
+
+			/* option validation is done later */
+			append_options(options, optarg);
 			break;
 
 		case 'O':
@@ -3377,8 +3418,7 @@ unshare_unmount_path(int op, char *path, int flags, boolean_t is_manual)
 	struct stat64 statbuf;
 	struct extmnttab entry;
 	const char *cmdname = (op == OP_SHARE) ? "unshare" : "unmount";
-	char nfs_mnt_prop[ZFS_MAXPROPLEN];
-	char smbshare_prop[ZFS_MAXPROPLEN];
+	ino_t path_inode;
 
 	/*
 	 * Search for the path in /etc/mnttab.  Rather than looking for the
@@ -3391,6 +3431,7 @@ unshare_unmount_path(int op, char *path, int flags, boolean_t is_manual)
 		    cmdname, path, strerror(errno));
 		return (1);
 	}
+	path_inode = statbuf.st_ino;
 
 	/*
 	 * Search for the given (major,minor) pair in the mount table.
@@ -3425,38 +3466,49 @@ unshare_unmount_path(int op, char *path, int flags, boolean_t is_manual)
 	    ZFS_TYPE_FILESYSTEM)) == NULL)
 		return (1);
 
-	verify(zfs_prop_get(zhp, op == OP_SHARE ?
-	    ZFS_PROP_SHARENFS : ZFS_PROP_MOUNTPOINT, nfs_mnt_prop,
-	    sizeof (nfs_mnt_prop), NULL, NULL, 0, B_FALSE) == 0);
-	verify(zfs_prop_get(zhp, op == OP_SHARE ?
-	    ZFS_PROP_SHARENFS : ZFS_PROP_MOUNTPOINT, smbshare_prop,
-	    sizeof (smbshare_prop), NULL, NULL, 0, B_FALSE) == 0);
 
+	ret = 1;
 	if (op == OP_SHARE) {
+		char nfs_mnt_prop[ZFS_MAXPROPLEN];
+		char smbshare_prop[ZFS_MAXPROPLEN];
+
+		verify(zfs_prop_get(zhp, ZFS_PROP_SHARENFS, nfs_mnt_prop,
+		    sizeof (nfs_mnt_prop), NULL, NULL, 0, B_FALSE) == 0);
+		verify(zfs_prop_get(zhp, ZFS_PROP_SHARESMB, smbshare_prop,
+		    sizeof (smbshare_prop), NULL, NULL, 0, B_FALSE) == 0);
+
 		if (strcmp(nfs_mnt_prop, "off") == 0 &&
 		    strcmp(smbshare_prop, "off") == 0) {
 			(void) fprintf(stderr, gettext("cannot unshare "
 			    "'%s': legacy share\n"), path);
 			(void) fprintf(stderr, gettext("use "
 			    "unshare(1M) to unshare this filesystem\n"));
-			ret = 1;
 		} else if (!zfs_is_shared(zhp)) {
 			(void) fprintf(stderr, gettext("cannot unshare '%s': "
 			    "not currently shared\n"), path);
-			ret = 1;
 		} else {
 			ret = zfs_unshareall_bypath(zhp, path);
 		}
 	} else {
-		if (is_manual) {
+		char mtpt_prop[ZFS_MAXPROPLEN];
+
+		verify(zfs_prop_get(zhp, ZFS_PROP_MOUNTPOINT, mtpt_prop,
+		    sizeof (mtpt_prop), NULL, NULL, 0, B_FALSE) == 0);
+
+		if (stat64(entry.mnt_mountp, &statbuf) != 0) {
+			(void) fprintf(stderr, gettext("cannot %s '%s': %s\n"),
+			    cmdname, path, strerror(errno));
+		} else if (statbuf.st_ino != path_inode) {
+			(void) fprintf(stderr, gettext("cannot "
+			    "unmount '%s': not a mountpoint\n"), path);
+		} else if (is_manual) {
 			ret = zfs_unmount(zhp, NULL, flags);
-		} else if (strcmp(nfs_mnt_prop, "legacy") == 0) {
+		} else if (strcmp(mtpt_prop, "legacy") == 0) {
 			(void) fprintf(stderr, gettext("cannot unmount "
 			    "'%s': legacy mountpoint\n"),
 			    zfs_get_name(zhp));
 			(void) fprintf(stderr, gettext("use umount(1M) "
 			    "to unmount this filesystem\n"));
-			ret = 1;
 		} else {
 			ret = zfs_unmountall(zhp, flags);
 		}
@@ -3582,6 +3634,10 @@ unshare_unmount(int op, int argc, char **argv)
 				    sizeof (nfsiscsi_mnt_prop),
 				    NULL, NULL, 0, B_FALSE) == 0);
 				if (strcmp(nfsiscsi_mnt_prop, "legacy") == 0)
+					continue;
+				/* Ignore canmount=noauto mounts */
+				if (zfs_prop_get_int(zhp, ZFS_PROP_CANMOUNT) ==
+				    ZFS_CANMOUNT_NOAUTO)
 					continue;
 			default:
 				break;

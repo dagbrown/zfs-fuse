@@ -19,7 +19,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -82,7 +82,9 @@ int arc_released(arc_buf_t *buf);
 int arc_has_callback(arc_buf_t *buf);
 void arc_buf_freeze(arc_buf_t *buf);
 void arc_buf_thaw(arc_buf_t *buf);
+#ifdef ZFS_DEBUG
 int arc_referenced(arc_buf_t *buf);
+#endif
 
 int arc_read(zio_t *pio, spa_t *spa, blkptr_t *bp, arc_byteswap_func_t *swap,
     arc_done_func_t *done, void *private, int priority, int flags,
@@ -99,8 +101,8 @@ void arc_set_callback(arc_buf_t *buf, arc_evict_func_t *func, void *private);
 int arc_buf_evict(arc_buf_t *buf);
 
 void arc_flush(spa_t *spa);
-void arc_tempreserve_clear(uint64_t tempreserve);
-int arc_tempreserve_space(uint64_t tempreserve);
+void arc_tempreserve_clear(uint64_t reserve);
+int arc_tempreserve_space(uint64_t reserve, uint64_t txg);
 
 void arc_init(void);
 void arc_fini(void);

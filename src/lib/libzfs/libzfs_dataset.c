@@ -70,8 +70,6 @@ zfs_type_to_name(zfs_type_t type)
 	switch (type) {
 	case ZFS_TYPE_FILESYSTEM:
 		return (dgettext(TEXT_DOMAIN, "filesystem"));
-	case ZFS_TYPE_POOL:
-		return (dgettext(TEXT_DOMAIN, "pool"));
 	case ZFS_TYPE_SNAPSHOT:
 		return (dgettext(TEXT_DOMAIN, "snapshot"));
 	case ZFS_TYPE_VOLUME:
@@ -218,6 +216,8 @@ zfs_validate_name(libzfs_handle_t *hdl, const char *path, int type,
 int
 zfs_name_valid(const char *name, zfs_type_t type)
 {
+	if (type == ZFS_TYPE_POOL)
+		return (zpool_name_valid(NULL, B_FALSE, name));
 	return (zfs_validate_name(NULL, name, type, B_FALSE));
 }
 
@@ -848,8 +848,6 @@ zfs_validate_properties(libzfs_handle_t *hdl, zfs_type_t type, nvlist_t *nvl,
 					goto error;
 				}
 				break;
-			default:
-				break;
 			}
 		}
 	}
@@ -1128,7 +1126,7 @@ zfs_build_perms(zfs_handle_t *zhp, char *whostr, char *perms,
 			if (sets_nvp)
 				nvlist_free(sets_nvp);
 			(void) snprintf(errbuf, sizeof (errbuf),
-			    dgettext(TEXT_DOMAIN, "Who string is NULL: %s"),
+			    dgettext(TEXT_DOMAIN, "Who string is NULL"),
 			    whostr);
 			return (zfs_error(zhp->zfs_hdl, EZFS_BADWHO, errbuf));
 		}
@@ -1724,6 +1722,7 @@ zfs_prop_set(zfs_handle_t *zhp, const char *propname, const char *propval)
 	libzfs_handle_t *hdl = zhp->zfs_hdl;
 	nvlist_t *nvl = NULL, *realprops;
 	zfs_prop_t prop;
+	int do_prefix = 1;
 
 	(void) snprintf(errbuf, sizeof (errbuf),
 	    dgettext(TEXT_DOMAIN, "cannot set property for '%s'"),
@@ -1755,8 +1754,13 @@ zfs_prop_set(zfs_handle_t *zhp, const char *propname, const char *propval)
 		goto error;
 	}
 
-	if ((ret = changelist_prefix(cl)) != 0)
-		goto error;
+
+	/* do not unmount dataset if canmount is being set to noauto */
+	if (prop == ZFS_PROP_CANMOUNT && *propval == ZFS_CANMOUNT_NOAUTO)
+		do_prefix = 0;
+
+	if (do_prefix && (ret = changelist_prefix(cl)) != 0)
+			goto error;
 
 	/*
 	 * Execute the corresponding ioctl() to set this property.
@@ -1831,11 +1835,14 @@ zfs_prop_set(zfs_handle_t *zhp, const char *propname, const char *propval)
 			(void) zfs_standard_error(hdl, errno, errbuf);
 		}
 	} else {
+		if (do_prefix)
+			ret = changelist_postfix(cl);
+
 		/*
 		 * Refresh the statistics so the new property value
 		 * is reflected.
 		 */
-		if ((ret = changelist_postfix(cl)) == 0)
+		if (ret == 0)
 			(void) get_stats(zhp);
 	}
 
@@ -2100,7 +2107,7 @@ get_numeric_property(zfs_handle_t *zhp, zfs_prop_t prop, zprop_source_t *src,
 
 	case ZFS_PROP_CANMOUNT:
 		*val = getprop_uint64(zhp, prop, source);
-		if (*val == 0)
+		if (*val != ZFS_CANMOUNT_ON)
 			*source = zhp->zfs_name;
 		else
 			*source = "";	/* default */
@@ -2241,7 +2248,7 @@ zfs_prop_get(zfs_handle_t *zhp, zfs_prop_t prop, char *propbuf, size_t proplen,
 			    localtime_r(&time, &t) == NULL ||
 			    strftime(propbuf, proplen, "%a %b %e %k:%M %Y",
 			    &t) == 0)
-				(void) snprintf(propbuf, proplen, "%llu", (u_longlong_t)val);
+				(void) snprintf(propbuf, proplen, "%llu", val);
 		}
 		break;
 
@@ -2953,7 +2960,6 @@ zfs_create(libzfs_handle_t *hdl, const char *path, zfs_type_t type,
 			    "pool must be upgraded to set this "
 			    "property or value"));
 			return (zfs_error(hdl, EZFS_BADVERSION, errbuf));
-
 #ifdef _ILP32
 		case EOVERFLOW:
 			/*
@@ -3858,7 +3864,6 @@ zvol_create_link(libzfs_handle_t *hdl, const char *dataset)
 static int
 zvol_create_link_common(libzfs_handle_t *hdl, const char *dataset, int ifexists)
 {
-#if 0
 	zfs_cmd_t zc = { 0 };
 	di_devlink_handle_t dhdl;
 	priv_set_t *priv_effective;
@@ -3947,10 +3952,6 @@ zvol_create_link_common(libzfs_handle_t *hdl, const char *dataset, int ifexists)
 	}
 
 	return (0);
-#endif
-
-	/* zfs-fuse TODO: implement ZVOLs */
-	abort();
 }
 
 /*
@@ -4087,9 +4088,6 @@ zfs_expand_proplist(zfs_handle_t *zhp, zprop_list_t **plp)
 int
 zfs_iscsi_perm_check(libzfs_handle_t *hdl, char *dataset, ucred_t *cred)
 {
-	/* ZFS-FUSE: not implemented */
-	return (ENOTSUP);
-#if 0
 	zfs_cmd_t zc = { 0 };
 	nvlist_t *nvp;
 	gid_t gid;
@@ -4131,7 +4129,6 @@ zfs_iscsi_perm_check(libzfs_handle_t *hdl, char *dataset, ucred_t *cred)
 	error = ioctl(hdl->libzfs_fd, ZFS_IOC_ISCSI_PERM_CHECK, &zc);
 	nvlist_free(nvp);
 	return (error);
-#endif
 }
 
 int

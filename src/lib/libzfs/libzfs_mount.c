@@ -128,12 +128,10 @@ zfs_share_proto_t share_all_proto[] = {
 	PROTO_END
 };
 
-static void
-zfs_iscsi_init(void) __attribute__((constructor));
+#pragma init(zfs_iscsi_init)
 static void
 zfs_iscsi_init(void)
 {
-#if 0
 	void *libiscsitgt;
 
 	if ((libiscsitgt = dlopen("/lib/libiscsitgt.so.1",
@@ -151,7 +149,6 @@ zfs_iscsi_init(void)
 		iscsitgt_zfs_is_shared = NULL;
 		iscsitgt_svc_online = NULL;
 	}
-#endif
 }
 
 /*
@@ -288,7 +285,7 @@ zfs_is_mountable(zfs_handle_t *zhp, char *buf, size_t buflen,
 	    strcmp(buf, ZFS_MOUNTPOINT_LEGACY) == 0)
 		return (B_FALSE);
 
-	if (!zfs_prop_get_int(zhp, ZFS_PROP_CANMOUNT))
+	if (zfs_prop_get_int(zhp, ZFS_PROP_CANMOUNT) == ZFS_CANMOUNT_OFF)
 		return (B_FALSE);
 
 	if (zfs_prop_get_int(zhp, ZFS_PROP_ZONED) &&
@@ -347,9 +344,8 @@ zfs_mount(zfs_handle_t *zhp, const char *options, int flags)
 	}
 
 	/* perform the mount */
-	/* ZFSFUSE */
-	if (zfsfuse_mount(hdl, zfs_get_name(zhp), mountpoint, MS_OPTIONSTR | flags,
-	    MNTTYPE_ZFS, NULL, 0, mntopts, strlen (mntopts)) != 0) {
+	if (mount(zfs_get_name(zhp), mountpoint, MS_OPTIONSTR | flags,
+	    MNTTYPE_ZFS, NULL, 0, mntopts, sizeof (mntopts)) != 0) {
 		/*
 		 * Generic errors are nasty, but there are just way too many
 		 * from mount(), and they're well-understood.  We pick a few
@@ -379,33 +375,14 @@ zfs_mount(zfs_handle_t *zhp, const char *options, int flags)
 static int
 unmount_one(libzfs_handle_t *hdl, const char *mountpoint, int flags)
 {
-	ASSERT((flags & ~MS_FORCE) == 0);
-
-	char *cmd;
-	int res_print;
-
-	if(flags & MS_FORCE)
-		res_print = asprintf(&cmd, "umount -l %s", mountpoint);
-	else
-		res_print = asprintf(&cmd, "umount %s", mountpoint);
-
-	if(res_print == -1) {
-		zfs_error_aux(hdl, strerror(ENOMEM));
-		goto error;
-	}
-
-	int ret = system(cmd);
-	free(cmd);
-	if (ret != 0) {
-		zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "umount failed"));
-		goto error;
+	if (umount2(mountpoint, flags) != 0) {
+		zfs_error_aux(hdl, strerror(errno));
+		return (zfs_error_fmt(hdl, EZFS_UMOUNTFAILED,
+		    dgettext(TEXT_DOMAIN, "cannot unmount '%s'"),
+		    mountpoint));
 	}
 
 	return (0);
-error:
-	return (zfs_error_fmt(hdl, EZFS_UMOUNTFAILED,
-	    dgettext(TEXT_DOMAIN, "cannot unmount '%s'"),
-	    mountpoint));
 }
 
 /*
@@ -572,11 +549,10 @@ static void (*_sa_update_sharetab_ts)(sa_handle_t);
  * Make sure the correct ISA version is loaded.
  */
 
-static void _zfs_init_libshare(void) __attribute__((constructor));
+#pragma init(_zfs_init_libshare)
 static void
 _zfs_init_libshare(void)
 {
-#if 0
 	void *libshare;
 	char path[MAXPATHLEN];
 	char isa[MAXISALEN];
@@ -631,7 +607,6 @@ _zfs_init_libshare(void)
 			_sa_update_sharetab_ts = NULL;
 		}
 	}
-#endif
 }
 
 /*
@@ -758,9 +733,6 @@ zfs_sa_disable_share(sa_share_t share, char *proto)
 static int
 zfs_share_proto(zfs_handle_t *zhp, zfs_share_proto_t *proto)
 {
-	/* ZFSFUSE: not implemented */
-	return 0;
-#if 0
 	char mountpoint[ZFS_MAXPROPLEN];
 	char shareopts[ZFS_MAXPROPLEN];
 	char sourcestr[ZFS_MAXPROPLEN];
@@ -846,7 +818,6 @@ zfs_share_proto(zfs_handle_t *zhp, zfs_share_proto_t *proto)
 
 	}
 	return (0);
-#endif
 }
 
 
@@ -1058,17 +1029,10 @@ zfs_is_shared_iscsi(zfs_handle_t *zhp)
 int
 zfs_share_iscsi(zfs_handle_t *zhp)
 {
-	/*char shareopts[ZFS_MAXPROPLEN];*/
+	char shareopts[ZFS_MAXPROPLEN];
 	const char *dataset = zhp->zfs_name;
 	libzfs_handle_t *hdl = zhp->zfs_hdl;
 
-	/* ZFSFUSE: not implemented */
-	zfs_error_aux(hdl, dgettext(TEXT_DOMAIN, "feature not implemented yet"));
-	return zfs_error_fmt(hdl, EZFS_SHAREISCSIFAILED,
-	                 dgettext(TEXT_DOMAIN, "cannot share '%s'"),
-	                 dataset);
-
-#if 0
 	/*
 	 * Return success if there are no share options.
 	 */
@@ -1093,7 +1057,6 @@ zfs_share_iscsi(zfs_handle_t *zhp)
 	}
 
 	return (0);
-#endif
 }
 
 int
@@ -1136,6 +1099,11 @@ mount_cb(zfs_handle_t *zhp, void *data)
 	mount_cbdata_t *cbp = data;
 
 	if (!(zfs_get_type(zhp) & (ZFS_TYPE_FILESYSTEM | ZFS_TYPE_VOLUME))) {
+		zfs_close(zhp);
+		return (0);
+	}
+
+	if (zfs_prop_get_int(zhp, ZFS_PROP_CANMOUNT) == ZFS_CANMOUNT_NOAUTO) {
 		zfs_close(zhp);
 		return (0);
 	}

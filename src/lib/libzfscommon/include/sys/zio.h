@@ -20,7 +20,7 @@
  */
 
 /*
- * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -178,10 +178,11 @@ enum zio_compress {
 #define	ZIO_PIPELINE_STOP		0x101
 
 /*
- * We'll take the unused errno 'EBADE' (from the Convergent graveyard)
- * to indicate checksum errors.
+ * We'll take the unused errnos, 'EBADE' and 'EBADR' (from the Convergent
+ * graveyard) to indicate checksum errors and fragmentation.
  */
 #define	ECKSUM	EBADE
+#define	EFRAGS	EBADR
 
 typedef struct zio zio_t;
 typedef void zio_done_func_t(zio_t *zio);
@@ -280,12 +281,6 @@ struct zio {
 
 	/* FMA state */
 	uint64_t	io_ena;
-
-	/* Async I/O */
-#ifdef LINUX_AIO
-	struct iocb     io_aio;
-	zio_aio_ctx_t   *io_aio_ctx;
-#endif
 };
 
 extern zio_t *zio_null(zio_t *pio, spa_t *spa,
@@ -385,14 +380,6 @@ extern int zio_inject_list_next(int *id, char *name, size_t buflen,
 extern int zio_clear_fault(int id);
 extern int zio_handle_fault_injection(zio_t *zio, int error);
 extern int zio_handle_device_injection(vdev_t *vd, int error);
-
-/*
- * Asynchronous I/O
- */
-#ifdef LINUX_AIO
-extern int zio_aio_init(spa_t *spa);
-extern void zio_aio_fini(spa_t *spa);
-#endif
 
 #ifdef	__cplusplus
 }

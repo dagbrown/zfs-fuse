@@ -74,7 +74,7 @@ zfs_match_find(zfsvfs_t *zfsvfs, znode_t *dzp, char *name, boolean_t exact,
 		char *buf = NULL;
 
 		if (rpnp) {
-			buf = rpnp->pn_path;
+			buf = rpnp->pn_buf;
 			bufsz = rpnp->pn_bufsize;
 		}
 		if (exact)
@@ -85,7 +85,7 @@ zfs_match_find(zfsvfs_t *zfsvfs, znode_t *dzp, char *name, boolean_t exact,
 		 */
 		error = zap_lookup_norm(zfsvfs->z_os, dzp->z_id, name, 8, 1,
 		    zoid, mt, buf, bufsz, &conflict);
-		if (deflags)
+		if (!error && deflags)
 			*deflags = conflict ? ED_CASE_CONFLICT : 0;
 	} else {
 		error = zap_lookup(zfsvfs->z_os, dzp->z_id, name, 8, 1, zoid);
@@ -303,7 +303,7 @@ zfs_dirent_lock(zfs_dirlock_t **dlpp, znode_t *dzp, char *name, znode_t **zpp,
 			zfs_dirent_unlock(dl);
 			return (EEXIST);
 		}
-		error = zfs_zget(zfsvfs, zoid, zpp, B_FALSE);
+		error = zfs_zget(zfsvfs, zoid, zpp);
 		if (error) {
 			zfs_dirent_unlock(dl);
 			return (error);
@@ -379,7 +379,7 @@ zfs_dirlook(znode_t *dzp, char *name, vnode_t **vpp, int flags,
 			return (error);
 		}
 		rw_enter(&dzp->z_parent_lock, RW_READER);
-		error = zfs_zget(zfsvfs, dzp->z_phys->zp_parent, &zp, B_FALSE);
+		error = zfs_zget(zfsvfs, dzp->z_phys->zp_parent, &zp);
 		if (error == 0)
 			*vpp = ZTOV(zp);
 		rw_exit(&dzp->z_parent_lock);
@@ -401,8 +401,8 @@ zfs_dirlook(znode_t *dzp, char *name, vnode_t **vpp, int flags,
 		rpnp = NULL;
 	}
 
-	if ((flags & FIGNORECASE) && rpnp)
-		(void) strlcpy(rpnp->pn_path, name, rpnp->pn_bufsize);
+	if ((flags & FIGNORECASE) && rpnp && !error)
+		(void) strlcpy(rpnp->pn_buf, name, rpnp->pn_bufsize);
 
 	return (error);
 }
@@ -486,7 +486,7 @@ zfs_unlinked_drain(zfsvfs_t *zfsvfs)
 		 * We need to re-mark these list entries for deletion,
 		 * so we pull them back into core and set zp->z_unlinked.
 		 */
-		error = zfs_zget(zfsvfs, zap.za_first_integer, &zp, B_FALSE);
+		error = zfs_zget(zfsvfs, zap.za_first_integer, &zp);
 
 		/*
 		 * We may pick up znodes that are already marked for deletion.
@@ -530,7 +530,7 @@ zfs_purgedir(znode_t *dzp)
 	    (error = zap_cursor_retrieve(&zc, &zap)) == 0;
 	    zap_cursor_advance(&zc)) {
 		error = zfs_zget(zfsvfs,
-		    ZFS_DIRENT_OBJ(zap.za_first_integer), &xzp, B_FALSE);
+		    ZFS_DIRENT_OBJ(zap.za_first_integer), &xzp);
 		if (error) {
 			skipped += 1;
 			continue;
@@ -602,7 +602,7 @@ zfs_rmnode(znode_t *zp)
 	 * the xattr dir.
 	 */
 	if (zp->z_phys->zp_xattr) {
-		error = zfs_zget(zfsvfs, zp->z_phys->zp_xattr, &xzp, B_FALSE);
+		error = zfs_zget(zfsvfs, zp->z_phys->zp_xattr, &xzp);
 		ASSERT(error == 0);
 	}
 
@@ -872,7 +872,6 @@ zfs_make_xattrdir(znode_t *zp, vattr_t *vap, vnode_t **xvpp, cred_t *cr)
  *	RETURN:	0 on success
  *		error number on failure
  */
-#if 0
 int
 zfs_get_xattrdir(znode_t *zp, vnode_t **xvpp, cred_t *cr, int flags)
 {
@@ -929,7 +928,6 @@ top:
 
 	return (error);
 }
-#endif
 
 /*
  * Decide whether it is okay to remove within a sticky directory.

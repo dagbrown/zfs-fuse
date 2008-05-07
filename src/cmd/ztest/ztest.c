@@ -1237,8 +1237,8 @@ ztest_dmu_objset_create_destroy(ztest_args_t *za)
 	/*
 	 * Verify that we can create a new dataset.
 	 */
-	error = dmu_objset_create(name, DMU_OST_OTHER, NULL, ztest_create_cb,
-	    NULL);
+	error = dmu_objset_create(name, DMU_OST_OTHER, NULL, 0,
+	    ztest_create_cb, NULL);
 	if (error) {
 		if (error == ENOSPC) {
 			ztest_record_enospc("dmu_objset_create");
@@ -1293,7 +1293,7 @@ ztest_dmu_objset_create_destroy(ztest_args_t *za)
 	/*
 	 * Verify that we cannot create an existing dataset.
 	 */
-	error = dmu_objset_create(name, DMU_OST_OTHER, NULL, NULL, NULL);
+	error = dmu_objset_create(name, DMU_OST_OTHER, NULL, 0, NULL, NULL);
 	if (error != EEXIST)
 		fatal(0, "created existing dataset, error = %d", error);
 
@@ -2839,15 +2839,29 @@ ztest_verify_blocks(char *pool)
 	int status;
 	char zdb[MAXPATHLEN + MAXNAMELEN + 20];
 	char zbuf[1024];
+	char *bin;
+	char *ztest;
+	char *isa;
+	int isalen;
 	FILE *fp;
 
-	/* zfs-fuse: ztest is never installed, so zdb should be in ../zdb/ */
+	(void) realpath(getexecname(), zdb);
+
+	/* zdb lives in /usr/sbin, while ztest lives in /usr/bin */
+	bin = strstr(zdb, "/usr/bin/");
+	ztest = strstr(bin, "/ztest");
+	isa = bin + 8;
+	isalen = ztest - isa;
+	isa = strdup(isa);
 	/* LINTED */
-	(void) sprintf(zdb,
-	    "../zdb/zdb -bc%s%s -U /tmp/zpool.cache -O %s %s",
+	(void) sprintf(bin,
+	    "/usr/sbin%.*s/zdb -bc%s%s -U /tmp/zpool.cache -O %s %s",
+	    isalen,
+	    isa,
 	    zopt_verbose >= 3 ? "s" : "",
 	    zopt_verbose >= 4 ? "v" : "",
 	    ztest_random(2) == 0 ? "pre" : "post", pool);
+	free(isa);
 
 	if (zopt_verbose >= 5)
 		(void) printf("Executing %s\n", strstr(zdb, "zdb "));
@@ -3205,7 +3219,7 @@ ztest_run(char *pool)
 			int test_future = FALSE;
 			(void) rw_rdlock(&ztest_shared->zs_name_lock);
 			(void) snprintf(name, 100, "%s/%s_%d", pool, pool, d);
-			error = dmu_objset_create(name, DMU_OST_OTHER, NULL,
+			error = dmu_objset_create(name, DMU_OST_OTHER, NULL, 0,
 			    ztest_create_cb, NULL);
 			if (error == EEXIST) {
 				test_future = TRUE;

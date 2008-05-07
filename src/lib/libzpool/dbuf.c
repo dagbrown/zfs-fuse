@@ -19,7 +19,7 @@
  * CDDL HEADER END
  */
 /*
- * Copyright 2007 Sun Microsystems, Inc.  All rights reserved.
+ * Copyright 2008 Sun Microsystems, Inc.  All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -1203,7 +1203,7 @@ dbuf_undirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 void
 dbuf_will_dirty(dmu_buf_impl_t *db, dmu_tx_t *tx)
 {
-	int rf = DB_RF_MUST_SUCCEED;
+	int rf = DB_RF_MUST_SUCCEED | DB_RF_NOPREFETCH;
 
 	ASSERT(tx->tx_txg != 0);
 	ASSERT(!refcount_is_zero(&db->db_holds));
@@ -1558,7 +1558,7 @@ dbuf_prefetch(dnode_t *dn, uint64_t blkid)
  */
 int
 dbuf_hold_impl(dnode_t *dn, uint8_t level, uint64_t blkid, int fail_sparse,
-    const void *tag, dmu_buf_impl_t **dbp)
+    void *tag, dmu_buf_impl_t **dbp)
 {
 	dmu_buf_impl_t *db, *parent = NULL;
 
@@ -1645,7 +1645,7 @@ top:
 }
 
 dmu_buf_impl_t *
-dbuf_hold(dnode_t *dn, uint64_t blkid, const void *tag)
+dbuf_hold(dnode_t *dn, uint64_t blkid, void *tag)
 {
 	dmu_buf_impl_t *db;
 	int err = dbuf_hold_impl(dn, 0, blkid, FALSE, tag, &db);
@@ -1679,7 +1679,7 @@ dbuf_add_ref(dmu_buf_impl_t *db, void *tag)
 
 #pragma weak dmu_buf_rele = dbuf_rele
 void
-dbuf_rele(dmu_buf_impl_t *db, const void *tag)
+dbuf_rele(dmu_buf_impl_t *db, void *tag)
 {
 	int64_t holds;
 

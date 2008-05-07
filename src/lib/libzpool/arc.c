@@ -130,7 +130,6 @@
 #include <vm/anon.h>
 #include <sys/fs/swapnode.h>
 #include <sys/dnlc.h>
-#include <sys/kmem.h>
 #endif
 #include <sys/callb.h>
 #include <sys/kstat.h>
@@ -138,6 +137,10 @@
 static kmutex_t		arc_reclaim_thr_lock;
 static kcondvar_t	arc_reclaim_thr_cv;	/* used to signal reclaim thr */
 static uint8_t		arc_thread_exit;
+
+extern int zfs_write_limit_shift;
+extern uint64_t zfs_write_limit_max;
+extern uint64_t zfs_write_limit_inflated;
 
 #define	ARC_REDUCE_DNLC_PERCENT	3
 uint_t arc_reduce_dnlc_percent = ARC_REDUCE_DNLC_PERCENT;
@@ -258,6 +261,7 @@ typedef struct arc_stats {
 	kstat_named_t arcstat_l2_io_error;
 	kstat_named_t arcstat_l2_size;
 	kstat_named_t arcstat_l2_hdr_size;
+	kstat_named_t arcstat_memory_throttle_count;
 } arc_stats_t;
 
 static arc_stats_t arc_stats = {
@@ -305,7 +309,8 @@ static arc_stats_t arc_stats = {
 	{ "l2_cksum_bad",		KSTAT_DATA_UINT64 },
 	{ "l2_io_error",		KSTAT_DATA_UINT64 },
 	{ "l2_size",			KSTAT_DATA_UINT64 },
-	{ "l2_hdr_size",		KSTAT_DATA_UINT64 }
+	{ "l2_hdr_size",		KSTAT_DATA_UINT64 },
+	{ "memory_throttle_count",	KSTAT_DATA_UINT64 }
 };
 
 #define	ARCSTAT(stat)	(arc_stats.stat.value.ui64)
@@ -1023,7 +1028,6 @@ arc_change_state(arc_state_t *new_state, arc_buf_hdr_t *ab, kmutex_t *hash_lock)
 				to_delta = ab->b_size;
 			}
 			atomic_add_64(size, to_delta);
-			atomic_add_64(&new_state->arcs_size, to_delta);
 
 			if (use_mutex)
 				mutex_exit(&new_state->arcs_mtx);
@@ -1036,7 +1040,7 @@ arc_change_state(arc_state_t *new_state, arc_buf_hdr_t *ab, kmutex_t *hash_lock)
 	}
 
 	/* adjust state sizes */
-	if (to_delta && (refcnt != 0 || new_state == arc_anon))
+	if (to_delta)
 		atomic_add_64(&new_state->arcs_size, to_delta);
 	if (from_delta) {
 		ASSERT3U(old_state->arcs_size, >=, from_delta);
@@ -1093,14 +1097,14 @@ arc_buf_alloc(spa_t *spa, int size, void *tag, arc_buf_contents_t type)
 	arc_buf_t *buf;
 
 	ASSERT3U(size, >, 0);
-	hdr = kmem_cache_alloc(hdr_cache, KM_SLEEP);
+	hdr = kmem_cache_alloc(hdr_cache, KM_PUSHPAGE);
 	ASSERT(BUF_EMPTY(hdr));
 	hdr->b_size = size;
 	hdr->b_type = type;
 	hdr->b_spa = spa;
 	hdr->b_state = arc_anon;
 	hdr->b_arc_access = 0;
-	buf = kmem_cache_alloc(buf_cache, KM_SLEEP);
+	buf = kmem_cache_alloc(buf_cache, KM_PUSHPAGE);
 	buf->b_hdr = hdr;
 	buf->b_data = NULL;
 	buf->b_efunc = NULL;
@@ -1123,7 +1127,7 @@ arc_buf_clone(arc_buf_t *from)
 	arc_buf_hdr_t *hdr = from->b_hdr;
 	uint64_t size = hdr->b_size;
 
-	buf = kmem_cache_alloc(buf_cache, KM_SLEEP);
+	buf = kmem_cache_alloc(buf_cache, KM_PUSHPAGE);
 	buf->b_hdr = hdr;
 	buf->b_data = NULL;
 	buf->b_efunc = NULL;
@@ -1723,7 +1727,7 @@ arc_shrink(void)
 	if (arc_c > arc_c_min) {
 		uint64_t to_free;
 
-#if 0
+#ifdef _KERNEL
 		to_free = MAX(arc_c >> arc_shrink_shift, ptob(needfree));
 #else
 		to_free = arc_c >> arc_shrink_shift;
@@ -1749,7 +1753,6 @@ arc_shrink(void)
 static int
 arc_reclaim_needed(void)
 {
-#if 0
 	uint64_t extra;
 
 #ifdef _KERNEL
@@ -1803,7 +1806,6 @@ arc_reclaim_needed(void)
 	if (spa_get_random(100) == 0)
 		return (1);
 #endif
-#endif
 	return (0);
 }
 
@@ -1816,7 +1818,7 @@ arc_kmem_reap_now(arc_reclaim_strategy_t strat)
 	extern kmem_cache_t	*zio_buf_cache[];
 	extern kmem_cache_t	*zio_data_buf_cache[];
 
-#if 0
+#ifdef _KERNEL
 	if (arc_meta_used >= arc_meta_limit) {
 		/*
 		 * We are exceeding our meta-data cache limit.
@@ -1856,7 +1858,7 @@ arc_kmem_reap_now(arc_reclaim_strategy_t strat)
 static void
 arc_reclaim_thread(void)
 {
-	int64_t			growtime = 0;
+	clock_t			growtime = 0;
 	arc_reclaim_strategy_t	last_reclaim = ARC_RECLAIM_CONS;
 	callb_cpr_t		cpr;
 
@@ -1879,11 +1881,11 @@ arc_reclaim_thread(void)
 			}
 
 			/* reset the growth delay for every reclaim */
-			growtime = lbolt64 + (arc_grow_retry * hz);
+			growtime = lbolt + (arc_grow_retry * hz);
 
 			arc_kmem_reap_now(last_reclaim);
 
-		} else if (arc_no_grow && lbolt64 >= growtime) {
+		} else if (arc_no_grow && lbolt >= growtime) {
 			arc_no_grow = FALSE;
 		}
 
@@ -1979,7 +1981,7 @@ arc_evict_needed(arc_buf_contents_t type)
 	if (type == ARC_BUFC_METADATA && arc_meta_used >= arc_meta_limit)
 		return (1);
 
-#if 0
+#ifdef _KERNEL
 	/*
 	 * If zio data pages are being allocated out of a separate heap segment,
 	 * then enforce that the size of available vmem for this area remains
@@ -2508,7 +2510,7 @@ top:
 				hdr->b_flags |= ARC_PREFETCH;
 			else
 				add_reference(hdr, hash_lock, private);
-			buf = kmem_cache_alloc(buf_cache, KM_SLEEP);
+			buf = kmem_cache_alloc(buf_cache, KM_PUSHPAGE);
 			buf->b_hdr = hdr;
 			buf->b_data = NULL;
 			buf->b_efunc = NULL;
@@ -2822,7 +2824,7 @@ arc_release(arc_buf_t *buf, void *tag)
 
 		mutex_exit(hash_lock);
 
-		nhdr = kmem_cache_alloc(hdr_cache, KM_SLEEP);
+		nhdr = kmem_cache_alloc(hdr_cache, KM_PUSHPAGE);
 		nhdr->b_size = blksz;
 		nhdr->b_spa = spa;
 		nhdr->b_type = type;
@@ -2879,11 +2881,13 @@ arc_has_callback(arc_buf_t *buf)
 	return (buf->b_efunc != NULL);
 }
 
+#ifdef ZFS_DEBUG
 int
 arc_referenced(arc_buf_t *buf)
 {
 	return (refcount_count(&buf->b_hdr->b_refcnt));
 }
+#endif
 
 static void
 arc_write_ready(zio_t *zio)
@@ -3093,16 +3097,73 @@ arc_free(zio_t *pio, spa_t *spa, uint64_t txg, blkptr_t *bp,
 	return (0);
 }
 
-void
-arc_tempreserve_clear(uint64_t tempreserve)
+static int
+arc_memory_throttle(uint64_t reserve, uint64_t txg)
 {
-	atomic_add_64(&arc_tempreserve, -tempreserve);
+#ifdef _KERNEL
+	uint64_t inflight_data = arc_anon->arcs_size;
+	uint64_t available_memory = ptob(freemem);
+	static uint64_t page_load = 0;
+	static uint64_t last_txg = 0;
+
+#if defined(__i386)
+	available_memory =
+	    MIN(available_memory, vmem_size(heap_arena, VMEM_FREE));
+#endif
+	if (available_memory >= zfs_write_limit_max)
+		return (0);
+
+	if (txg > last_txg) {
+		last_txg = txg;
+		page_load = 0;
+	}
+	/*
+	 * If we are in pageout, we know that memory is already tight,
+	 * the arc is already going to be evicting, so we just want to
+	 * continue to let page writes occur as quickly as possible.
+	 */
+	if (curproc == proc_pageout) {
+		if (page_load > MAX(ptob(minfree), available_memory) / 4)
+			return (ERESTART);
+		/* Note: reserve is inflated, so we deflate */
+		page_load += reserve / 8;
+		return (0);
+	} else if (page_load > 0 && arc_reclaim_needed()) {
+		/* memory is low, delay before restarting */
+		ARCSTAT_INCR(arcstat_memory_throttle_count, 1);
+		return (EAGAIN);
+	}
+	page_load = 0;
+
+	if (arc_size > arc_c_min) {
+		uint64_t evictable_memory =
+		    arc_mru->arcs_lsize[ARC_BUFC_DATA] +
+		    arc_mru->arcs_lsize[ARC_BUFC_METADATA] +
+		    arc_mfu->arcs_lsize[ARC_BUFC_DATA] +
+		    arc_mfu->arcs_lsize[ARC_BUFC_METADATA];
+		available_memory += MIN(evictable_memory, arc_size - arc_c_min);
+	}
+
+	if (inflight_data > available_memory / 4) {
+		ARCSTAT_INCR(arcstat_memory_throttle_count, 1);
+		return (ERESTART);
+	}
+#endif
+	return (0);
+}
+
+void
+arc_tempreserve_clear(uint64_t reserve)
+{
+	atomic_add_64(&arc_tempreserve, -reserve);
 	ASSERT((int64_t)arc_tempreserve >= 0);
 }
 
 int
-arc_tempreserve_space(uint64_t tempreserve)
+arc_tempreserve_space(uint64_t reserve, uint64_t txg)
 {
+	int error;
+
 #ifdef ZFS_DEBUG
 	/*
 	 * Once in a while, fail for no reason.  Everything should cope.
@@ -3112,10 +3173,18 @@ arc_tempreserve_space(uint64_t tempreserve)
 		return (ERESTART);
 	}
 #endif
-	if (tempreserve > arc_c/4 && !arc_no_grow)
-		arc_c = MIN(arc_c_max, tempreserve * 4);
-	if (tempreserve > arc_c)
+	if (reserve > arc_c/4 && !arc_no_grow)
+		arc_c = MIN(arc_c_max, reserve * 4);
+	if (reserve > arc_c)
 		return (ENOMEM);
+
+	/*
+	 * Writes will, almost always, require additional memory allocations
+	 * in order to compress/encrypt/etc the data.  We therefor need to
+	 * make sure that there is sufficient available memory for this.
+	 */
+	if (error = arc_memory_throttle(reserve, txg))
+		return (error);
 
 	/*
 	 * Throttle writes when the amount of dirty data in the cache
@@ -3123,22 +3192,18 @@ arc_tempreserve_space(uint64_t tempreserve)
 	 * of dirty blocks so that our sync times don't grow too large.
 	 * Note: if two requests come in concurrently, we might let them
 	 * both succeed, when one of them should fail.  Not a huge deal.
-	 *
-	 * XXX The limit should be adjusted dynamically to keep the time
-	 * to sync a dataset fixed (around 1-5 seconds?).
 	 */
-
-	if (tempreserve + arc_tempreserve + arc_anon->arcs_size > arc_c / 2 &&
-	    arc_tempreserve + arc_anon->arcs_size > arc_c / 4) {
+	if (reserve + arc_tempreserve + arc_anon->arcs_size > arc_c / 2 &&
+	    arc_anon->arcs_size > arc_c / 4) {
 		dprintf("failing, arc_tempreserve=%lluK anon_meta=%lluK "
 		    "anon_data=%lluK tempreserve=%lluK arc_c=%lluK\n",
 		    arc_tempreserve>>10,
 		    arc_anon->arcs_lsize[ARC_BUFC_METADATA]>>10,
 		    arc_anon->arcs_lsize[ARC_BUFC_DATA]>>10,
-		    tempreserve>>10, arc_c>>10);
+		    reserve>>10, arc_c>>10);
 		return (ERESTART);
 	}
-	atomic_add_64(&arc_tempreserve, tempreserve);
+	atomic_add_64(&arc_tempreserve, reserve);
 	return (0);
 }
 
@@ -3154,7 +3219,7 @@ arc_init(void)
 	/* Start out with 1/8 of all memory */
 	arc_c = physmem * PAGESIZE / 8;
 
-#if 0
+#ifdef _KERNEL
 	/*
 	 * On architectures where the physical memory can be larger
 	 * than the addressable space (intel in 32-bit mode), we may
@@ -3163,14 +3228,14 @@ arc_init(void)
 	arc_c = MIN(arc_c, vmem_size(heap_arena, VMEM_ALLOC | VMEM_FREE) / 8);
 #endif
 
-	/* set min cache to 16 MB */
-	arc_c_min = 16<<20;
-#ifdef _KERNEL
-	/* set max cache to ZFSFUSE_MAX_ARCSIZE */
-	arc_c_max = ZFSFUSE_MAX_ARCSIZE;
-#else
-	arc_c_max = 64<<20;
-#endif
+	/* set min cache to 1/32 of all memory, or 64MB, whichever is more */
+	arc_c_min = MAX(arc_c / 4, 64<<20);
+	/* set max to 3/4 of all memory, or all but 1GB, whichever is more */
+	if (arc_c * 8 >= 1<<30)
+		arc_c_max = (arc_c * 8) - (1<<30);
+	else
+		arc_c_max = arc_c_min;
+	arc_c_max = MAX(arc_c * 6, arc_c_max);
 
 	/*
 	 * Allow the tunables to override our calculations if they are
@@ -3255,6 +3320,12 @@ arc_init(void)
 	    TS_RUN, minclsyspri);
 
 	arc_dead = FALSE;
+
+	if (zfs_write_limit_max == 0)
+		zfs_write_limit_max = physmem * PAGESIZE >>
+		    zfs_write_limit_shift;
+	else
+		zfs_write_limit_shift = 0;
 }
 
 void
@@ -3800,7 +3871,7 @@ l2arc_write_buffers(spa_t *spa, l2arc_dev_t *dev)
 	pio = NULL;
 	write_sz = 0;
 	full = B_FALSE;
-	head = kmem_cache_alloc(hdr_cache, KM_SLEEP);
+	head = kmem_cache_alloc(hdr_cache, KM_PUSHPAGE);
 	head->b_flags |= ARC_L2_WRITE_HEAD;
 
 	/*
